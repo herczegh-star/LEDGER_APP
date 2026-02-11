@@ -178,6 +178,32 @@ class LedgerStore:
         ).fetchall()
         return [self._row_to_rawrow(r) for r in rows]
 
+    def timeline_filtered(
+        self,
+        venue: Optional[str] = None,
+        asset: Optional[str] = None,
+        time_from: Optional[datetime] = None,
+        time_to: Optional[datetime] = None,
+    ) -> List[RawRow]:
+        """Timeline s volitelnými filtry."""
+        query = "SELECT * FROM ledger WHERE 1=1"
+        params: list = []
+        if venue:
+            query += " AND venue = ?"
+            params.append(venue.lower())
+        if asset:
+            query += " AND asset = ?"
+            params.append(asset.upper())
+        if time_from:
+            query += " AND timestamp >= ?"
+            params.append(time_from.isoformat())
+        if time_to:
+            query += " AND timestamp <= ?"
+            params.append(time_to.isoformat())
+        query += " ORDER BY timestamp ASC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._row_to_rawrow(r) for r in rows]
+
     def recent_rows(self, limit: int = 20) -> List[dict]:
         """Vrátí posledních N řádků s pk pro zobrazení/výběr."""
         rows = self.conn.execute(

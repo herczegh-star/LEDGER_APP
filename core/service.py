@@ -1,4 +1,6 @@
 """LedgerService: jediné veřejné API jádra. UI volá jen tuto vrstvu."""
+import csv
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -29,6 +31,18 @@ class OperationResult:
     rows_inserted: int = 0
     diagnostics: List[dict] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ExportFilter:
+    """Filtry pro export."""
+    venue: Optional[str] = None
+    asset: Optional[str] = None
+    time_from: Optional[datetime] = None
+    time_to: Optional[datetime] = None
+
+
+_EXPORT_FIELDS = ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note"]
 
 
 class LedgerService:
@@ -164,6 +178,36 @@ class LedgerService:
             success=True,
             rows_inserted=inserted_count,
             diagnostics=self._store.diagnostics(),
+        )
+
+    # ── EXPORT OPERACE ─────────────────────────────
+
+    def export_raw_csv(self, path: str, filters: Optional[ExportFilter] = None) -> int:
+        """Export ledgeru do CSV v kanonickém tvaru. Vrací počet řádků."""
+        rows = self._filtered_rows(filters)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_EXPORT_FIELDS)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row.to_dict()[k] for k in _EXPORT_FIELDS})
+        return len(rows)
+
+    def export_raw_json(self, path: str, filters: Optional[ExportFilter] = None) -> int:
+        """Export ledgeru do JSON v kanonickém tvaru. Vrací počet řádků."""
+        rows = self._filtered_rows(filters)
+        data = [{k: row.to_dict()[k] for k in _EXPORT_FIELDS} for row in rows]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return len(rows)
+
+    def _filtered_rows(self, filters: Optional[ExportFilter] = None) -> List[RawRow]:
+        if filters is None:
+            return self._store.timeline()
+        return self._store.timeline_filtered(
+            venue=filters.venue,
+            asset=filters.asset,
+            time_from=filters.time_from,
+            time_to=filters.time_to,
         )
 
     # ── READ / QUERY OPERACE ─────────────────────

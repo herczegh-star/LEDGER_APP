@@ -6,7 +6,8 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.model import VALID_TYPES
-from core.service import LedgerService
+from core.config import load_config
+from core.service import LedgerService, ExportFilter
 
 
 def print_header(text: str):
@@ -102,7 +103,7 @@ def do_import(svc: LedgerService):
         print(f"  Chyba při importu: {e}")
 
 
-def do_add_row(svc: LedgerService):
+def do_add_row(svc: LedgerService, cfg: dict):
     print_header("RUČNÍ ZÁPIS TOKU")
     print(f"  Typy: {', '.join(sorted(VALID_TYPES))}")
     try:
@@ -121,7 +122,9 @@ def do_add_row(svc: LedgerService):
         price_str = input("  price (volitelné, Enter = žádná): ").strip()
         price = Decimal(price_str) if price_str else None
 
-        venue = input("  venue: ").strip().lower()
+        dv = cfg.get("default_venue", "")
+        venue_prompt = f"  venue [{dv}]: " if dv else "  venue: "
+        venue = input(venue_prompt).strip().lower() or dv
         note = input("  note (volitelné): ").strip() or None
 
         result = svc.add_row(
@@ -138,7 +141,7 @@ def do_add_row(svc: LedgerService):
         print(f"  Chyba: {e}")
 
 
-def do_add_trade(svc: LedgerService):
+def do_add_trade(svc: LedgerService, cfg: dict):
     print_header("DOUBLE-ENTRY OBCHOD")
     print("  Vytvoří 2 řádky se sdíleným id (BUY nebo SELL)")
     try:
@@ -157,7 +160,9 @@ def do_add_trade(svc: LedgerService):
         price_str = input("  price (volitelné, Enter = žádná): ").strip()
         price = Decimal(price_str) if price_str else None
 
-        venue = input("  venue: ").strip().lower()
+        dv = cfg.get("default_venue", "")
+        venue_prompt = f"  venue [{dv}]: " if dv else "  venue: "
+        venue = input(venue_prompt).strip().lower() or dv
         note = input("  note (volitelné): ").strip() or None
 
         result = svc.add_trade(
@@ -220,21 +225,92 @@ def do_reversal(svc: LedgerService):
             print(f"  ✗ {err}")
 
 
-def main():
-    db_path = "ledger.db"
-    if len(sys.argv) > 1:
-        db_path = sys.argv[1]
+def do_export(svc: LedgerService, cfg: dict):
+    print_header("EXPORT")
+    if svc.count() == 0:
+        print("  (prázdný ledger – nic k exportu)")
+        return
 
-    svc = LedgerService(db_path)
-    print_header("LEDGER APP – MVP")
-    print(f"  Databáze: {db_path}")
+    fmt = input("  Formát (csv/json) [csv]: ").strip().lower() or "csv"
+    if fmt not in ("csv", "json"):
+        print("  Neplatný formát.")
+        return
+
+    print("  Filtry (Enter = přeskočit):")
+    asset = input("    asset: ").strip().upper() or None
+    venue = input("    venue: ").strip().lower() or None
+
+    from_str = input("    od (YYYY-MM-DD): ").strip()
+    time_from = None
+    if from_str:
+        try:
+            time_from = datetime.strptime(from_str, "%Y-%m-%d")
+        except ValueError:
+            print("  Neplatný formát data.")
+            return
+
+    to_str = input("    do (YYYY-MM-DD): ").strip()
+    time_to = None
+    if to_str:
+        try:
+            time_to = datetime.strptime(to_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        except ValueError:
+            print("  Neplatný formát data.")
+            return
+
+    filters = None
+    if any([asset, venue, time_from, time_to]):
+        filters = ExportFilter(venue=venue, asset=asset, time_from=time_from, time_to=time_to)
+
+    export_dir = cfg["export_dir"]
+    os.makedirs(export_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"ledger_export_{ts}.{fmt}"
+    path = os.path.join(export_dir, filename)
+
+    try:
+        if fmt == "csv":
+            count = svc.export_raw_csv(path, filters)
+        else:
+            count = svc.export_raw_json(path, filters)
+        print(f"  ✓ Exportováno {count} řádků → {path}")
+    except Exception as e:
+        print(f"  Chyba při exportu: {e}")
+
+
+def do_init(svc: LedgerService, cfg: dict):
+    print_header("INIT / STATUS")
+    print(f"  Databáze: {cfg['db_path']}")
+    print(f"  Export dir: {cfg['export_dir']}")
+    dv = cfg.get("default_venue", "")
+    print(f"  Default venue: {dv if dv else '(nezadáno)'}")
+    print(f"  Řádků v ledgeru: {svc.count()}")
+    warnings = svc.diagnostics()
+    if warnings:
+        print(f"  ⚠ {len(warnings)} diagnostických varování:")
+        for w in warnings[:5]:
+            print(f"    {w['msg']}")
+        if len(warnings) > 5:
+            print(f"    ... a dalších {len(warnings) - 5}")
+    else:
+        print("  ✓ Žádné diagnostické problémy")
+
+
+def main():
+    cfg = load_config()
+    if len(sys.argv) > 1:
+        cfg["db_path"] = sys.argv[1]
+
+    svc = LedgerService(cfg["db_path"])
+    print_header("LEDGER APP")
+    print(f"  Databáze: {cfg['db_path']}")
     print(f"  Řádků v ledgeru: {svc.count()}")
 
     while True:
         print(f"\n  [1] Timeline    [2] Asset view    [3] Venue view")
         print(f"  [4] Import RAW  [5] Přidat tok    [6] Diagnostika")
-        print(f"  [7] Obchod      [8] Reversal")
-        print(f"  [0] Konec")
+        print(f"  [7] Obchod      [8] Reversal      [9] Export")
+        print(f"  [i] Init/Status [0] Konec")
         choice = input("\n  Volba: ").strip()
 
         if choice == "1":
@@ -246,13 +322,17 @@ def main():
         elif choice == "4":
             do_import(svc)
         elif choice == "5":
-            do_add_row(svc)
+            do_add_row(svc, cfg)
         elif choice == "6":
             print_diagnostics(svc)
         elif choice == "7":
-            do_add_trade(svc)
+            do_add_trade(svc, cfg)
         elif choice == "8":
             do_reversal(svc)
+        elif choice == "9":
+            do_export(svc, cfg)
+        elif choice.lower() == "i":
+            do_init(svc, cfg)
         elif choice == "0":
             svc.close()
             print("  Ukončeno.")
