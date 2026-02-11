@@ -5,12 +5,8 @@ from datetime import datetime
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.model import RawRow, VALID_TYPES
-from core.validator import validate_row
-from core.ledger_store import LedgerStore
-from core.trade import create_trade
-from core.reversal import create_reversal, create_reversal_pair
-from io_module.raw_loader import load_raw
+from core.model import VALID_TYPES
+from core.service import LedgerService
 
 
 def print_header(text: str):
@@ -19,9 +15,9 @@ def print_header(text: str):
     print(f"{'='*60}")
 
 
-def print_timeline(store: LedgerStore):
+def print_timeline(svc: LedgerService):
     print_header("TIMELINE")
-    rows = store.timeline()
+    rows = svc.timeline()
     if not rows:
         print("  (prázdný ledger – 0 řádků)")
         return
@@ -35,9 +31,9 @@ def print_timeline(store: LedgerStore):
     print(f"\n  Celkem: {len(rows)} řádků")
 
 
-def print_asset_view(store: LedgerStore):
+def print_asset_view(svc: LedgerService):
     print_header("ASSET VIEW")
-    balances = store.asset_balances()
+    balances = svc.asset_balances()
     if not balances:
         print("  (žádná aktiva)")
         return
@@ -48,9 +44,9 @@ def print_asset_view(store: LedgerStore):
         print(f"  {asset:<10} {bal:>16}{marker}")
 
 
-def print_venue_view(store: LedgerStore):
+def print_venue_view(svc: LedgerService):
     print_header("VENUE VIEW")
-    venue_bal = store.venue_balances()
+    venue_bal = svc.venue_balances()
     if not venue_bal:
         print("  (žádná data)")
         return
@@ -61,9 +57,9 @@ def print_venue_view(store: LedgerStore):
             print(f"    {asset:<10} {bal:>16}{marker}")
 
 
-def print_diagnostics(store: LedgerStore):
+def print_diagnostics(svc: LedgerService):
     print_header("DIAGNOSTIKA")
-    warnings = store.diagnostics()
+    warnings = svc.diagnostics()
     if not warnings:
         print("  ✓ Žádné problémy.")
         return
@@ -71,7 +67,7 @@ def print_diagnostics(store: LedgerStore):
         print(f"  ⚠ {w['msg']}")
 
 
-def do_import(store: LedgerStore):
+def do_import(svc: LedgerService):
     print_header("IMPORT RAW SOUBORU")
     filepath = input("  Cesta k souboru (*.xlsm / *.csv): ").strip()
     if not filepath:
@@ -81,33 +77,32 @@ def do_import(store: LedgerStore):
         print(f"  Soubor nenalezen: {filepath}")
         return
     try:
-        load_result = load_raw(filepath)
-        rows = load_result.rows
-        print(f"  Načteno {len(rows)} řádků.")
-        if load_result.errors:
-            print(f"  ⚠ Parse chyby v {len(load_result.errors)} řádcích:")
-            for err in load_result.errors[:5]:
+        result = svc.import_file(filepath)
+
+        if result.parse_errors:
+            print(f"  ⚠ Parse chyby v {len(result.parse_errors)} řádcích:")
+            for err in result.parse_errors[:5]:
                 print(f"    řádek {err['row_index']}: {', '.join(err['errors'])}")
-            if len(load_result.errors) > 5:
-                print(f"    ... a dalších {len(load_result.errors) - 5}")
-        from core.validator import validate_rows
-        valid, invalid = validate_rows(rows)
-        if invalid:
-            print(f"  ⚠ {len(invalid)} řádků neprojde validací:")
-            for idx, errs in invalid[:5]:
+            if len(result.parse_errors) > 5:
+                print(f"    ... a dalších {len(result.parse_errors) - 5}")
+
+        if result.validation_errors:
+            print(f"  ⚠ {len(result.validation_errors)} řádků neprojde validací:")
+            for idx, errs in result.validation_errors[:5]:
                 print(f"    řádek {idx}: {', '.join(errs)}")
-            if len(invalid) > 5:
-                print(f"    ... a dalších {len(invalid)-5}")
-        if valid:
-            result = store.import_rows(valid)
-            print(f"  ✓ Importováno: {result['inserted']}, přeskočeno (duplikáty): {result['skipped']}")
+            if len(result.validation_errors) > 5:
+                print(f"    ... a dalších {len(result.validation_errors) - 5}")
+
+        if result.inserted or result.skipped:
+            print(f"  ✓ Importováno: {result.inserted}, přeskočeno (duplikáty): {result.skipped}")
         else:
             print("  Žádné validní řádky k importu.")
+
     except Exception as e:
         print(f"  Chyba při importu: {e}")
 
 
-def do_add_row(store: LedgerStore):
+def do_add_row(svc: LedgerService):
     print_header("RUČNÍ ZÁPIS TOKU")
     print(f"  Typy: {', '.join(sorted(VALID_TYPES))}")
     try:
@@ -129,26 +124,21 @@ def do_add_row(store: LedgerStore):
         venue = input("  venue: ").strip().lower()
         note = input("  note (volitelné): ").strip() or None
 
-        row = RawRow(
-            timestamp=ts, type=type_, asset=asset, amount=amount,
-            currency=currency, price=price, venue=venue, note=note
+        result = svc.add_row(
+            timestamp=ts, type_=type_, asset=asset, amount=amount,
+            currency=currency, price=price, venue=venue, note=note,
         )
 
-        ok, errs = validate_row(row)
-        if not ok:
-            print(f"  ✗ Validace selhala: {', '.join(errs)}")
-            return
-
-        if store.insert(row):
-            print(f"  ✓ Tok zapsán. (id: {row.id[:12]}...)")
+        if result.success:
+            print(f"  ✓ Tok zapsán.")
         else:
-            print("  ✗ Duplicitní řádek (row_fp již existuje).")
+            print(f"  ✗ {', '.join(result.errors)}")
 
     except (ValueError, Exception) as e:
         print(f"  Chyba: {e}")
 
 
-def do_add_trade(store: LedgerStore):
+def do_add_trade(svc: LedgerService):
     print_header("DOUBLE-ENTRY OBCHOD")
     print("  Vytvoří 2 řádky se sdíleným id (BUY nebo SELL)")
     try:
@@ -170,38 +160,26 @@ def do_add_trade(store: LedgerStore):
         venue = input("  venue: ").strip().lower()
         note = input("  note (volitelné): ").strip() or None
 
-        row_a, row_c = create_trade(
+        result = svc.add_trade(
             timestamp=ts, type_=type_, asset=asset,
             asset_amount=asset_amount, currency=currency,
             currency_amount=currency_amount, venue=venue,
             price=price, note=note,
         )
 
-        ok_a, errs_a = validate_row(row_a)
-        ok_c, errs_c = validate_row(row_c)
-        if not ok_a or not ok_c:
-            print("  ✗ Validace selhala:")
-            if errs_a:
-                print(f"    Asset řádek: {', '.join(errs_a)}")
-            if errs_c:
-                print(f"    Currency řádek: {', '.join(errs_c)}")
-            return
-
-        ins_a, ins_c = store.insert_pair(row_a, row_c)
-        if ins_a and ins_c:
-            print(f"  ✓ Obchod zapsán (id: {row_a.id[:12]}...):")
-            print(f"    {row_a.asset} {row_a.amount:+}")
-            print(f"    {row_c.asset} {row_c.amount:+}")
+        if result.success:
+            print(f"  ✓ Obchod zapsán ({result.rows_inserted} řádků).")
         else:
-            print("  ⚠ Jeden nebo oba řádky jsou duplikáty.")
+            for err in result.errors:
+                print(f"  ✗ {err}")
 
     except (ValueError, Exception) as e:
         print(f"  Chyba: {e}")
 
 
-def do_reversal(store: LedgerStore):
+def do_reversal(svc: LedgerService):
     print_header("REVERSAL")
-    recent = store.recent_rows(20)
+    recent = svc.recent_rows(20)
     if not recent:
         print("  (žádné řádky v ledgeru)")
         return
@@ -219,33 +197,27 @@ def do_reversal(store: LedgerStore):
         print("  Neplatné pk.")
         return
 
-    original = store.get_row_by_pk(pk)
+    # Zjisti jestli je to double-entry pár (UI se musí zeptat uživatele)
+    original = svc.get_row_by_pk(pk)
     if original is None:
         print(f"  Řádek pk={pk} nenalezen.")
         return
 
-    pair = store.get_rows_by_id(original.id)
+    reverse_pair = False
+    pair = svc.get_rows_by_id(original.id)
     if len(pair) > 1:
         print(f"  Řádek je součástí double-entry (id: {original.id[:12]}...):")
         for p in pair:
             print(f"    {p.asset} {p.amount:+}")
         choice = input("  Revertovat celý pár? (a/n): ").strip().lower()
-        if choice == "a":
-            reversals = create_reversal_pair(pair)
-        else:
-            reversals = [create_reversal(original)]
-    else:
-        reversals = [create_reversal(original)]
+        reverse_pair = (choice == "a")
 
-    for rev in reversals:
-        ok, errs = validate_row(rev)
-        if not ok:
-            print(f"  ✗ Validace reversal selhala: {', '.join(errs)}")
-            return
-        if store.insert(rev):
-            print(f"  ✓ REVERSAL zapsán: {rev.asset} {rev.amount:+} (note: {rev.note})")
-        else:
-            print(f"  ⚠ Duplicitní reversal, přeskočen.")
+    result = svc.add_reversal(pk, reverse_pair=reverse_pair)
+    if result.success:
+        print(f"  ✓ REVERSAL zapsán ({result.rows_inserted} řádků).")
+    else:
+        for err in result.errors:
+            print(f"  ✗ {err}")
 
 
 def main():
@@ -253,10 +225,10 @@ def main():
     if len(sys.argv) > 1:
         db_path = sys.argv[1]
 
-    store = LedgerStore(db_path)
+    svc = LedgerService(db_path)
     print_header("LEDGER APP – MVP")
     print(f"  Databáze: {db_path}")
-    print(f"  Řádků v ledgeru: {store.count()}")
+    print(f"  Řádků v ledgeru: {svc.count()}")
 
     while True:
         print(f"\n  [1] Timeline    [2] Asset view    [3] Venue view")
@@ -266,23 +238,23 @@ def main():
         choice = input("\n  Volba: ").strip()
 
         if choice == "1":
-            print_timeline(store)
+            print_timeline(svc)
         elif choice == "2":
-            print_asset_view(store)
+            print_asset_view(svc)
         elif choice == "3":
-            print_venue_view(store)
+            print_venue_view(svc)
         elif choice == "4":
-            do_import(store)
+            do_import(svc)
         elif choice == "5":
-            do_add_row(store)
+            do_add_row(svc)
         elif choice == "6":
-            print_diagnostics(store)
+            print_diagnostics(svc)
         elif choice == "7":
-            do_add_trade(store)
+            do_add_trade(svc)
         elif choice == "8":
-            do_reversal(store)
+            do_reversal(svc)
         elif choice == "0":
-            store.close()
+            svc.close()
             print("  Ukončeno.")
             break
         else:
