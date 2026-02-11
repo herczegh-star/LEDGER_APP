@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from core.model import RawRow
 
 
@@ -93,21 +93,25 @@ class LedgerStore:
 
     def asset_balances(self) -> dict:
         rows = self.conn.execute(
-            "SELECT asset, SUM(CAST(amount AS REAL)) as total FROM ledger GROUP BY asset ORDER BY asset"
+            "SELECT asset, amount FROM ledger ORDER BY asset"
         ).fetchall()
-        return {r["asset"]: Decimal(str(r["total"])) for r in rows}
+        totals: dict = {}
+        for r in rows:
+            asset = r["asset"]
+            totals[asset] = totals.get(asset, Decimal("0")) + Decimal(r["amount"])
+        return totals
 
     def venue_balances(self) -> dict:
         rows = self.conn.execute(
-            """SELECT venue, asset, SUM(CAST(amount AS REAL)) as total
-               FROM ledger GROUP BY venue, asset ORDER BY venue, asset"""
+            "SELECT venue, asset, amount FROM ledger ORDER BY venue, asset"
         ).fetchall()
-        result = {}
+        result: dict = {}
         for r in rows:
             venue = r["venue"]
+            asset = r["asset"]
             if venue not in result:
                 result[venue] = {}
-            result[venue][r["asset"]] = Decimal(str(r["total"]))
+            result[venue][asset] = result[venue].get(asset, Decimal("0")) + Decimal(r["amount"])
         return result
 
     def diagnostics(self) -> List[dict]:
@@ -124,6 +128,63 @@ class LedgerStore:
                         "msg": f"Záporný zůstatek: {asset} na {venue} = {balance}"
                     })
         return warnings
+
+    def insert_pair(self, row_a: RawRow, row_b: RawRow) -> Tuple[bool, bool]:
+        """Vloží dva řádky v jedné transakci (pro double-entry)."""
+        fp_a = row_a.fingerprint()
+        fp_b = row_b.fingerprint()
+        now = datetime.now().isoformat()
+        results = [False, False]
+        try:
+            self.conn.execute(
+                """INSERT INTO ledger
+                   (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (row_a.id or "", row_a.timestamp.isoformat(), row_a.type,
+                 row_a.asset.upper(), str(row_a.amount), row_a.currency.upper(),
+                 str(row_a.price) if row_a.price is not None else None,
+                 row_a.venue.lower(), row_a.note, fp_a, now),
+            )
+            results[0] = True
+        except sqlite3.IntegrityError:
+            pass
+        try:
+            self.conn.execute(
+                """INSERT INTO ledger
+                   (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (row_b.id or "", row_b.timestamp.isoformat(), row_b.type,
+                 row_b.asset.upper(), str(row_b.amount), row_b.currency.upper(),
+                 str(row_b.price) if row_b.price is not None else None,
+                 row_b.venue.lower(), row_b.note, fp_b, now),
+            )
+            results[1] = True
+        except sqlite3.IntegrityError:
+            pass
+        self.conn.commit()
+        return tuple(results)
+
+    def get_row_by_pk(self, pk: int) -> Optional[RawRow]:
+        """Načte řádek podle primary key."""
+        r = self.conn.execute("SELECT * FROM ledger WHERE pk = ?", (pk,)).fetchone()
+        if r is None:
+            return None
+        return self._row_to_rawrow(r)
+
+    def get_rows_by_id(self, row_id: str) -> List[RawRow]:
+        """Načte všechny řádky se stejným id (double-entry pár)."""
+        rows = self.conn.execute(
+            "SELECT * FROM ledger WHERE id = ? ORDER BY timestamp ASC", (row_id,)
+        ).fetchall()
+        return [self._row_to_rawrow(r) for r in rows]
+
+    def recent_rows(self, limit: int = 20) -> List[dict]:
+        """Vrátí posledních N řádků s pk pro zobrazení/výběr."""
+        rows = self.conn.execute(
+            "SELECT pk, id, timestamp, type, asset, amount, venue FROM ledger ORDER BY pk DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]

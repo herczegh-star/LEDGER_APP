@@ -1,19 +1,28 @@
 """RAW Loader: načtení *_raw.xlsm / *_raw.csv → List[RawRow]. Žádná transformace významu."""
 import csv
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 from core.model import RawRow
 
 
-def _parse_decimal(val) -> Decimal:
-    if val is None or val == "":
-        return Decimal("0")
+@dataclass
+class LoadResult:
+    """Výsledek načtení RAW souboru."""
+    rows: List[RawRow] = field(default_factory=list)
+    errors: List[dict] = field(default_factory=list)
+
+
+def _parse_decimal(val) -> Optional[Decimal]:
+    """Parsuje hodnotu na Decimal. Vrací None pro None, prázdný řetězec nebo nevalidní vstup."""
+    if val is None or str(val).strip() == "":
+        return None
     try:
-        return Decimal(str(val))
+        return Decimal(str(val).strip())
     except InvalidOperation:
-        return Decimal("0")
+        return None
 
 
 def _parse_timestamp(val) -> datetime:
@@ -28,11 +37,28 @@ def _parse_timestamp(val) -> datetime:
     raise ValueError(f"Nelze parsovat timestamp: {val}")
 
 
-def _normalize_row(row_dict: dict) -> RawRow:
-    ts = _parse_timestamp(row_dict.get("timestamp"))
+def _normalize_row(row_dict: dict, row_index: int = 0) -> Tuple[Optional[RawRow], Optional[dict]]:
+    """Normalizuje dict na RawRow. Vrací (row, None) při úspěchu, (None, error_dict) při chybě."""
+    errors = []
+
+    try:
+        ts = _parse_timestamp(row_dict.get("timestamp"))
+    except ValueError as e:
+        errors.append(str(e))
+        ts = None
+
     amount = _parse_decimal(row_dict.get("amount"))
+    if amount is None:
+        errors.append(f"Nevalidní nebo chybějící amount: {row_dict.get('amount')!r}")
+        amount = Decimal("0")
+
     price_raw = row_dict.get("price")
-    price = _parse_decimal(price_raw) if price_raw is not None and str(price_raw).strip() != "" else None
+    price = None
+    if price_raw is not None and str(price_raw).strip() != "":
+        price = _parse_decimal(price_raw)
+        if price is None:
+            errors.append(f"Nevalidní price: {price_raw!r}")
+
     venue = str(row_dict.get("venue", "")).strip().lower()
     asset = str(row_dict.get("asset", "")).strip().upper()
     currency = str(row_dict.get("currency", "")).strip().upper()
@@ -48,6 +74,13 @@ def _normalize_row(row_dict: dict) -> RawRow:
         if row_id == "" or row_id.lower() == "nan":
             row_id = None
 
+    if errors:
+        return None, {
+            "row_index": row_index,
+            "raw_data": {k: v for k, v in row_dict.items() if v is not None},
+            "errors": errors,
+        }
+
     return RawRow(
         id=row_id,
         timestamp=ts,
@@ -58,10 +91,10 @@ def _normalize_row(row_dict: dict) -> RawRow:
         price=price,
         venue=venue,
         note=note,
-    )
+    ), None
 
 
-def load_xlsm(filepath: str) -> List[RawRow]:
+def load_xlsm(filepath: str) -> LoadResult:
     import openpyxl
     wb = openpyxl.load_workbook(filepath, data_only=True)
     if "raw" in wb.sheetnames:
@@ -71,39 +104,41 @@ def load_xlsm(filepath: str) -> List[RawRow]:
 
     rows_data = list(ws.iter_rows(values_only=False))
     if not rows_data:
-        return []
+        return LoadResult()
 
     headers = [str(c.value).strip().lower() if c.value else "" for c in rows_data[0]]
-    result = []
-    for row in rows_data[1:]:
+    result = LoadResult()
+    for i, row in enumerate(rows_data[1:], start=1):
         vals = [c.value for c in row]
         row_dict = dict(zip(headers, vals))
         if not row_dict.get("type") or not row_dict.get("asset"):
             continue
         if str(row_dict.get("type", "")).strip() == "":
             continue
-        try:
-            result.append(_normalize_row(row_dict))
-        except (ValueError, KeyError) as e:
-            print(f"  Přeskočen řádek (chyba): {e}")
+        parsed, error = _normalize_row(row_dict, row_index=i)
+        if error:
+            result.errors.append(error)
+        else:
+            result.rows.append(parsed)
     return result
 
 
-def load_csv(filepath: str) -> List[RawRow]:
-    result = []
+def load_csv(filepath: str) -> LoadResult:
+    result = LoadResult()
     with open(filepath, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row_dict in reader:
+        for i, row_dict in enumerate(reader, start=1):
             if not row_dict.get("type") or not row_dict.get("asset"):
                 continue
-            try:
-                result.append(_normalize_row(row_dict))
-            except (ValueError, KeyError) as e:
-                print(f"  Přeskočen řádek (chyba): {e}")
+            parsed, error = _normalize_row(row_dict, row_index=i)
+            if error:
+                result.errors.append(error)
+            else:
+                result.rows.append(parsed)
     return result
 
 
-def load_raw(filepath: str) -> List[RawRow]:
+def load_raw(filepath: str) -> LoadResult:
     path = Path(filepath)
     if path.suffix in (".xlsm", ".xlsx"):
         return load_xlsm(filepath)

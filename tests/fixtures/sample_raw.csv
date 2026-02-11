@@ -1,0 +1,8 @@
+id,timestamp,type,asset,amount,currency,price,venue,note
+tx001,2026-01-10T10:00:00,BUY,BTC,0.5,EUR,50000,anycoin,test buy btc
+tx001,2026-01-10T10:00:00,BUY,EUR,-25000,BTC,50000,anycoin,test buy btc
+tx002,2026-01-15T14:30:00,BUY,ETH,2.0,EUR,3000,anycoin,test buy eth
+tx002,2026-01-15T14:30:00,BUY,EUR,-6000,ETH,3000,anycoin,test buy eth
+tx003,2026-02-01T09:00:00,TRANSFER,BTC,-0.1,BTC,,anycoin,transfer to wallet
+tx004,2026-02-01T09:05:00,TRANSFER,BTC,0.1,BTC,,coldwallet,transfer from anycoin
+tx005,2026-02-05T16:00:00,FEE,EUR,-5,EUR,,anycoin,trading fee

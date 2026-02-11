@@ -33,14 +33,18 @@ class RawRow:
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
     def fingerprint(self) -> str:
-        normalized = (
-            self.timestamp.strftime("%Y-%m-%dT%H:%M:%S")
-            + self.type.upper()
-            + self.venue.lower()
-            + self.asset.upper()
-            + f"{self.amount:.8f}"
-        )
-        return hashlib.sha256(normalized.encode()).hexdigest()
+        # Fingerprint v2: timestamp|type|venue|asset|currency|amount
+        # v1 chybělo currency, separátory a truncoval timestamp na sekundy.
+        # Existující DB z v1 musí být reimportovány nebo zmigrovány.
+        parts = "|".join([
+            self.timestamp.isoformat(),
+            self.type.upper(),
+            self.venue.lower(),
+            self.asset.upper(),
+            self.currency.upper(),
+            f"{self.amount:.8f}",
+        ])
+        return hashlib.sha256(parts.encode()).hexdigest()
 
     def to_dict(self) -> dict:
         d = asdict(self)
