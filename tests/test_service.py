@@ -94,9 +94,9 @@ def test_add_trade(svc):
     """TEST 6: add_trade success (2 řádky)."""
     result = svc.add_trade(
         timestamp=datetime(2026, 3, 1, 12, 0, 0),
-        type_="BUY", asset="BTC", asset_amount=Decimal("0.1"),
-        currency="EUR", currency_amount=Decimal("5000"),
-        venue="anycoin", price=Decimal("50000"),
+        type_="BUY", asset="BTC", amount=Decimal("0.1"),
+        currency="EUR", price=Decimal("50000"),
+        venue="anycoin",
     )
     assert result.success is True
     assert result.rows_inserted == 2
@@ -108,8 +108,8 @@ def test_add_trade_invalid_type(svc):
     """TEST 7: add_trade s TRANSFER → failure (jen BUY/SELL)."""
     result = svc.add_trade(
         timestamp=datetime(2026, 3, 1, 12, 0, 0),
-        type_="TRANSFER", asset="BTC", asset_amount=Decimal("0.1"),
-        currency="EUR", currency_amount=Decimal("5000"),
+        type_="TRANSFER", asset="BTC", amount=Decimal("0.1"),
+        currency="EUR", price=Decimal("50000"),
         venue="anycoin",
     )
     assert result.success is False
@@ -141,8 +141,8 @@ def test_add_reversal_pair(svc):
     """TEST 9: Reversal double-entry páru → oba balances = 0."""
     svc.add_trade(
         timestamp=datetime(2026, 3, 1, 12, 0, 0),
-        type_="BUY", asset="BTC", asset_amount=Decimal("0.1"),
-        currency="EUR", currency_amount=Decimal("5000"),
+        type_="BUY", asset="BTC", amount=Decimal("0.1"),
+        currency="EUR", price=Decimal("50000"),
         venue="anycoin",
     )
     recent = svc.recent_rows(2)

@@ -102,16 +102,14 @@ def cmd_add(args, cfg):
 def cmd_trade(args, cfg):
     svc, _ = _get_service(args, cfg)
     ts = _parse_timestamp(args.timestamp)
-    asset_amount = _parse_decimal(args.asset_amount, "asset-amount")
-    currency_amount = _parse_decimal(args.currency_amount, "currency-amount")
-    price = _parse_decimal(args.price, "price") if args.price else None
+    amount = _parse_decimal(args.amount, "amount")
+    price = _parse_decimal(args.price, "price")
     venue = _require_venue(args, cfg)
 
     result = svc.add_trade(
         timestamp=ts, type_=args.type.upper(), asset=args.asset.upper(),
-        asset_amount=asset_amount, currency=args.currency.upper(),
-        currency_amount=currency_amount, venue=venue,
-        price=price, note=args.note,
+        amount=amount, currency=args.currency.upper(),
+        price=price, venue=venue, note=args.note,
     )
     if result.success:
         print(f"Obchod zapsán ({result.rows_inserted} řádků).")
@@ -269,11 +267,10 @@ def build_parser():
     p_trade = sub.add_parser("trade", help="Double-entry obchod (2 řádky)")
     p_trade.add_argument("--type", required=True, help="BUY nebo SELL")
     p_trade.add_argument("--asset", required=True, help="Aktivum")
-    p_trade.add_argument("--asset-amount", required=True, help="Množství aktiva (kladné)")
+    p_trade.add_argument("--amount", required=True, help="Množství aktiva (kladné)")
     p_trade.add_argument("--currency", required=True, help="Protistranná měna")
-    p_trade.add_argument("--currency-amount", required=True, help="Množství měny (kladné)")
+    p_trade.add_argument("--price", required=True, help="Jednotková cena")
     p_trade.add_argument("--venue", help="Místo toku")
-    p_trade.add_argument("--price", help="Jednotková cena (volitelné)")
     p_trade.add_argument("--timestamp", help="ISO 8601 (default: nyní)")
     p_trade.add_argument("--note", help="Poznámka")
 

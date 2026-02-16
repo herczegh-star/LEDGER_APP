@@ -36,8 +36,8 @@ def test_trade():
     cleanup()
     result = run_cli(
         "trade", "--type", "BUY", "--asset", "BTC",
-        "--asset-amount", "0.1", "--currency", "EUR",
-        "--currency-amount", "5000", "--venue", "kraken",
+        "--amount", "0.1", "--currency", "EUR",
+        "--price", "50000", "--venue", "kraken",
     )
     assert result.returncode == 0, f"returncode={result.returncode}, stderr={result.stderr}"
     assert "2" in result.stdout

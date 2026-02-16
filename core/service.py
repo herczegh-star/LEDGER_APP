@@ -107,20 +107,18 @@ class LedgerService:
         timestamp: datetime,
         type_: str,
         asset: str,
-        asset_amount: Decimal,
+        amount: Decimal,
         currency: str,
-        currency_amount: Decimal,
+        price: Decimal,
         venue: str,
-        price: Optional[Decimal] = None,
         note: Optional[str] = None,
     ) -> OperationResult:
         """Vytvoří a vloží double-entry obchodní pár."""
         try:
             row_a, row_c = create_trade(
                 timestamp=timestamp, type_=type_, asset=asset,
-                asset_amount=asset_amount, currency=currency,
-                currency_amount=currency_amount, venue=venue,
-                price=price, note=note,
+                amount=amount, currency=currency,
+                price=price, venue=venue, note=note,
             )
         except ValueError as e:
             return OperationResult(success=False, errors=[str(e)])

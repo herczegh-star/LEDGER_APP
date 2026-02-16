@@ -10,31 +10,37 @@ def create_trade(
     timestamp: datetime,
     type_: str,
     asset: str,
-    asset_amount: Decimal,
+    amount: Decimal,
     currency: str,
-    currency_amount: Decimal,
+    price: Decimal,
     venue: str,
-    price: Optional[Decimal] = None,
     note: Optional[str] = None,
 ) -> Tuple[RawRow, RawRow]:
     """Vytvoří double-entry pár pro obchod.
 
-    BUY: +asset_amount aktiva, -currency_amount měny
-    SELL: -asset_amount aktiva, +currency_amount měny
+    quote_amount = amount * price (vypočteno automaticky).
+
+    BUY:  +amount aktiva, -quote_amount měny
+    SELL: -amount aktiva, +quote_amount měny
 
     Oba řádky sdílejí stejné id (UUID).
+    Invariant: currency = quote_asset pro oba řádky.
     """
     if type_ not in ("BUY", "SELL"):
         raise ValueError(f"Trade type musí být BUY nebo SELL, dostal: {type_}")
 
     shared_id = str(uuid.uuid4())
+    quote_amount = amount * price
 
     if type_ == "BUY":
-        asset_sign = asset_amount
-        currency_sign = -currency_amount
+        asset_sign = amount
+        currency_sign = -quote_amount
     else:
-        asset_sign = -asset_amount
-        currency_sign = currency_amount
+        asset_sign = -amount
+        currency_sign = quote_amount
+
+    # Invariant: currency = quote_asset pro oba řádky.
+    trade_currency = currency
 
     row_asset = RawRow(
         id=shared_id,
@@ -42,15 +48,11 @@ def create_trade(
         type=type_,
         asset=asset,
         amount=asset_sign,
-        currency=currency,
+        currency=trade_currency,
         price=price,
         venue=venue,
         note=note,
     )
-
-    # Invariant: currency = quote_asset pro oba řádky.
-    # Druhý řádek representuje cash flow v oceňovací měně.
-    trade_currency = currency
 
     row_currency = RawRow(
         id=shared_id,
@@ -59,7 +61,7 @@ def create_trade(
         asset=trade_currency,
         amount=currency_sign,
         currency=trade_currency,
-        price=price,
+        price=Decimal("1"),
         venue=venue,
         note=note,
     )

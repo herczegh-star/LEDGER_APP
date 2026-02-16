@@ -148,9 +148,9 @@ def test_trade_currency_invariant():
         timestamp=datetime(2026, 3, 1, 12, 0, 0),
         type_="BUY",
         asset="BTC",
-        asset_amount=Decimal("0.1"),
+        amount=Decimal("0.1"),
         currency="EUR",
-        currency_amount=Decimal("5000"),
+        price=Decimal("50000"),
         venue="kraken",
     )
     # Oba řádky musí mít currency = quote_asset (EUR)
@@ -161,19 +161,25 @@ def test_trade_currency_invariant():
     assert row_asset.currency != "BTC", "row_asset.currency nesmí být base_asset"
     assert row_currency.currency != "BTC", "row_currency.currency nesmí být base_asset"
 
+    # quote_amount = amount * price
+    assert row_asset.amount == Decimal("0.1"), f"base amount: {row_asset.amount}"
+    assert row_currency.amount == Decimal("-5000"), f"quote amount: {row_currency.amount}"
+
     # Ověř i SELL směr
     sell_a, sell_c = create_trade(
         timestamp=datetime(2026, 3, 2, 12, 0, 0),
         type_="SELL",
         asset="ETH",
-        asset_amount=Decimal("2"),
+        amount=Decimal("2"),
         currency="USD",
-        currency_amount=Decimal("6000"),
+        price=Decimal("3000"),
         venue="anycoin",
     )
     assert sell_a.currency == "USD", f"sell row_asset.currency={sell_a.currency}"
     assert sell_c.currency == "USD", f"sell row_currency.currency={sell_c.currency}"
-    print(f"  Trade currency invariant: BUY i SELL OK, currency = quote_asset")
+    assert sell_a.amount == Decimal("-2"), f"sell base amount: {sell_a.amount}"
+    assert sell_c.amount == Decimal("6000"), f"sell quote amount: {sell_c.amount}"
+    print(f"  Trade currency invariant: BUY i SELL OK, currency = quote_asset, quote_amount = amount * price")
 
 
 def main():

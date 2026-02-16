@@ -153,12 +153,9 @@ def do_add_trade(svc: LedgerService, cfg: dict):
 
         type_ = input("  type (BUY/SELL): ").strip().upper()
         asset = input("  asset (např. BTC): ").strip().upper()
-        asset_amount = Decimal(input("  asset amount (kladné): ").strip())
+        amount = Decimal(input("  amount (kladné): ").strip())
         currency = input("  currency (např. EUR): ").strip().upper()
-        currency_amount = Decimal(input("  currency amount (kladné): ").strip())
-
-        price_str = input("  price (volitelné, Enter = žádná): ").strip()
-        price = Decimal(price_str) if price_str else None
+        price = Decimal(input("  price (jednotková cena): ").strip())
 
         dv = cfg.get("default_venue", "")
         venue_prompt = f"  venue [{dv}]: " if dv else "  venue: "
@@ -167,9 +164,8 @@ def do_add_trade(svc: LedgerService, cfg: dict):
 
         result = svc.add_trade(
             timestamp=ts, type_=type_, asset=asset,
-            asset_amount=asset_amount, currency=currency,
-            currency_amount=currency_amount, venue=venue,
-            price=price, note=note,
+            amount=amount, currency=currency,
+            price=price, venue=venue, note=note,
         )
 
         if result.success:
