@@ -48,13 +48,17 @@ def create_trade(
         note=note,
     )
 
+    # Invariant: currency = quote_asset pro oba řádky.
+    # Druhý řádek representuje cash flow v oceňovací měně.
+    trade_currency = currency
+
     row_currency = RawRow(
         id=shared_id,
         timestamp=timestamp,
         type=type_,
-        asset=currency,
+        asset=trade_currency,
         amount=currency_sign,
-        currency=asset,
+        currency=trade_currency,
         price=price,
         venue=venue,
         note=note,

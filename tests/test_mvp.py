@@ -12,6 +12,7 @@ from pathlib import Path
 from core.model import RawRow
 from core.validator import validate_row, validate_rows
 from core.ledger_store import LedgerStore
+from core.trade import create_trade
 from io_module.raw_loader import load_raw
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -141,6 +142,40 @@ def test_empty_ledger():
     print(f"  Prázdný ledger ověřen")
 
 
+def test_trade_currency_invariant():
+    """TEST 10: Trade currency invariant – oba řádky mají currency = quote_asset."""
+    row_asset, row_currency = create_trade(
+        timestamp=datetime(2026, 3, 1, 12, 0, 0),
+        type_="BUY",
+        asset="BTC",
+        asset_amount=Decimal("0.1"),
+        currency="EUR",
+        currency_amount=Decimal("5000"),
+        venue="kraken",
+    )
+    # Oba řádky musí mít currency = quote_asset (EUR)
+    assert row_asset.currency == "EUR", f"row_asset.currency={row_asset.currency}, expected EUR"
+    assert row_currency.currency == "EUR", f"row_currency.currency={row_currency.currency}, expected EUR"
+
+    # currency nesmí být base_asset
+    assert row_asset.currency != "BTC", "row_asset.currency nesmí být base_asset"
+    assert row_currency.currency != "BTC", "row_currency.currency nesmí být base_asset"
+
+    # Ověř i SELL směr
+    sell_a, sell_c = create_trade(
+        timestamp=datetime(2026, 3, 2, 12, 0, 0),
+        type_="SELL",
+        asset="ETH",
+        asset_amount=Decimal("2"),
+        currency="USD",
+        currency_amount=Decimal("6000"),
+        venue="anycoin",
+    )
+    assert sell_a.currency == "USD", f"sell row_asset.currency={sell_a.currency}"
+    assert sell_c.currency == "USD", f"sell row_currency.currency={sell_c.currency}"
+    print(f"  Trade currency invariant: BUY i SELL OK, currency = quote_asset")
+
+
 def main():
     store = setup()
     try:
@@ -180,8 +215,12 @@ def main():
         test_empty_ledger()
         print("  PASS")
 
+        print("\nTEST 10: Trade currency invariant")
+        test_trade_currency_invariant()
+        print("  PASS")
+
         print("\n" + "=" * 60)
-        print("  ALL 9 TESTS PASSED")
+        print("  ALL 10 TESTS PASSED")
         print("=" * 60)
     finally:
         teardown(store)
