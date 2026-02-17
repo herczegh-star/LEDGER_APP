@@ -178,6 +178,13 @@ class LedgerStore:
         ).fetchall()
         return [self._row_to_rawrow(r) for r in rows]
 
+    def get_pks_by_id(self, row_id: str) -> List[int]:
+        """Vrátí seznam pk pro řádky se stejným id (UUID)."""
+        rows = self.conn.execute(
+            "SELECT pk FROM ledger WHERE id = ? ORDER BY pk ASC", (row_id,)
+        ).fetchall()
+        return [r["pk"] for r in rows]
+
     def timeline_filtered(
         self,
         venue: Optional[str] = None,

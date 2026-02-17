@@ -161,7 +161,14 @@ def cmd_trade(args, cfg):
 
 def cmd_reversal(args, cfg):
     svc, _ = _get_service(args, cfg)
-    result = svc.add_reversal(args.pk, reverse_pair=args.pair)
+    if args.id:
+        result = svc.reversal_by_id(args.id)
+    elif args.pk is not None:
+        result = svc.add_reversal(args.pk, reverse_pair=args.pair)
+    else:
+        print("Musíte zadat --pk nebo --id.", file=sys.stderr)
+        svc.close()
+        sys.exit(1)
     if result.success:
         print(f"REVERSAL zapsán ({result.rows_inserted} řádků).")
     else:
@@ -330,7 +337,8 @@ def build_parser():
 
     # reversal
     p_rev = sub.add_parser("reversal", help="Reversal existujícího řádku")
-    p_rev.add_argument("--pk", type=int, required=True, help="Primary key řádku")
+    p_rev.add_argument("--pk", type=int, help="Primary key řádku (interní)")
+    p_rev.add_argument("--id", help="UUID řádku (z exportu/timeline)")
     p_rev.add_argument("--pair", action="store_true", help="Revertovat celý double-entry pár")
 
     # diagnostics

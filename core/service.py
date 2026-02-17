@@ -242,6 +242,13 @@ class LedgerService:
             diagnostics=self._store.diagnostics(),
         )
 
+    def reversal_by_id(self, row_id: str) -> OperationResult:
+        """Reversal podle UUID. Vždy revertuje celý pár."""
+        pks = self._store.get_pks_by_id(row_id)
+        if not pks:
+            return OperationResult(success=False, errors=[f"UUID '{row_id}' nenalezeno."])
+        return self.add_reversal(pks[0], reverse_pair=True)
+
     # ── EXPORT OPERACE ─────────────────────────────
 
     def export_raw_csv(self, path: str, filters: Optional[ExportFilter] = None) -> int:
