@@ -10,6 +10,8 @@ from core.model import RawRow
 from core.ledger_store import LedgerStore
 from core.validator import validate_row, validate_rows
 from core.trade import create_trade
+from core.fee import create_fee
+from core.transfer import create_transfer
 from core.reversal import create_reversal, create_reversal_pair
 from io_module.raw_loader import load_raw
 
@@ -141,6 +143,68 @@ class LedgerService:
         return OperationResult(
             success=True,
             rows_inserted=rows_inserted,
+            diagnostics=self._store.diagnostics(),
+        )
+
+    def add_fee(
+        self,
+        timestamp: datetime,
+        venue: str,
+        asset: str,
+        amount_abs: Decimal,
+        note: Optional[str] = None,
+    ) -> OperationResult:
+        """Vytvoří a vloží FEE řádek."""
+        try:
+            row = create_fee(
+                timestamp=timestamp, venue=venue, asset=asset,
+                amount_abs=amount_abs, note=note,
+            )
+        except ValueError as e:
+            return OperationResult(success=False, errors=[str(e)])
+
+        ok, errs = validate_row(row)
+        if not ok:
+            return OperationResult(success=False, errors=errs)
+
+        inserted = self._store.insert(row)
+        if not inserted:
+            return OperationResult(success=False, errors=["Duplicitní řádek (row_fp již existuje)."])
+
+        return OperationResult(
+            success=True,
+            rows_inserted=1,
+            diagnostics=self._store.diagnostics(),
+        )
+
+    def add_transfer(
+        self,
+        timestamp: datetime,
+        venue: str,
+        asset: str,
+        amount: Decimal,
+        note: str,
+    ) -> OperationResult:
+        """Vytvoří a vloží TRANSFER řádek."""
+        try:
+            row = create_transfer(
+                timestamp=timestamp, venue=venue, asset=asset,
+                amount=amount, note=note,
+            )
+        except ValueError as e:
+            return OperationResult(success=False, errors=[str(e)])
+
+        ok, errs = validate_row(row)
+        if not ok:
+            return OperationResult(success=False, errors=errs)
+
+        inserted = self._store.insert(row)
+        if not inserted:
+            return OperationResult(success=False, errors=["Duplicitní řádek (row_fp již existuje)."])
+
+        return OperationResult(
+            success=True,
+            rows_inserted=1,
             diagnostics=self._store.diagnostics(),
         )
 

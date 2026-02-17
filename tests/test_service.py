@@ -208,6 +208,72 @@ def test_decimal_precision(svc):
     print(f"  decimal precision: BTC = {balances['BTC']}")
 
 
+def test_add_fee(svc):
+    """TEST 14: add_fee success."""
+    result = svc.add_fee(
+        timestamp=datetime(2026, 3, 1, 10, 0, 0),
+        venue="kraken", asset="BTC",
+        amount_abs=Decimal("0.001"), note="withdrawal fee",
+    )
+    assert result.success is True
+    assert result.rows_inserted == 1
+    balances = svc.asset_balances()
+    assert balances["BTC"] == Decimal("-0.001")
+    print(f"  add_fee: success, BTC = {balances['BTC']}")
+
+
+def test_add_fee_invalid(svc):
+    """TEST 15: add_fee s amount_abs=0 → failure."""
+    result = svc.add_fee(
+        timestamp=datetime(2026, 3, 1, 10, 0, 0),
+        venue="kraken", asset="BTC",
+        amount_abs=Decimal("0"),
+    )
+    assert result.success is False
+    assert len(result.errors) > 0
+    print(f"  add_fee invalid: rejected")
+
+
+def test_add_transfer(svc):
+    """TEST 16: add_transfer success (odchozí + příchozí)."""
+    result = svc.add_transfer(
+        timestamp=datetime(2026, 3, 1, 10, 0, 0),
+        venue="bybit", asset="ETH",
+        amount=Decimal("-0.5"), note="LEDGER",
+    )
+    assert result.success is True
+    assert result.rows_inserted == 1
+
+    result2 = svc.add_transfer(
+        timestamp=datetime(2026, 3, 1, 10, 1, 0),
+        venue="ledger", asset="ETH",
+        amount=Decimal("0.5"), note="BYBIT",
+    )
+    assert result2.success is True
+
+    balances = svc.asset_balances()
+    assert balances.get("ETH", Decimal("0")) == Decimal("0"), f"ETH balance: {balances.get('ETH')}"
+    print(f"  add_transfer: success, ETH out+in = 0")
+
+
+def test_add_transfer_invalid(svc):
+    """TEST 17: add_transfer s amount=0 nebo prázdným note → failure."""
+    result = svc.add_transfer(
+        timestamp=datetime(2026, 3, 1, 10, 0, 0),
+        venue="kraken", asset="BTC",
+        amount=Decimal("0"), note="test",
+    )
+    assert result.success is False
+
+    result2 = svc.add_transfer(
+        timestamp=datetime(2026, 3, 1, 10, 0, 0),
+        venue="kraken", asset="BTC",
+        amount=Decimal("1"), note="",
+    )
+    assert result2.success is False
+    print(f"  add_transfer invalid: rejected")
+
+
 def run_isolated(name, test_fn, *args):
     """Spustí test s čistým setup/teardown."""
     svc = setup()
@@ -249,6 +315,10 @@ def main():
         ("TEST 11: Empty queries", test_empty_queries),
         ("TEST 12: Diagnostics in result", test_diagnostics_in_result),
         ("TEST 13: Decimal precision", test_decimal_precision),
+        ("TEST 14: Add fee", test_add_fee),
+        ("TEST 15: Add fee invalid", test_add_fee_invalid),
+        ("TEST 16: Add transfer", test_add_transfer),
+        ("TEST 17: Add transfer invalid", test_add_transfer_invalid),
     ]
 
     for name, test_fn in tests:
@@ -264,7 +334,7 @@ def main():
         teardown(svc)
 
     print("\n" + "=" * 60)
-    print("  ALL 13 SERVICE TESTS PASSED")
+    print("  ALL 17 SERVICE TESTS PASSED")
     print("=" * 60)
 
 

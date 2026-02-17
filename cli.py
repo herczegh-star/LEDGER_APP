@@ -99,6 +99,44 @@ def cmd_add(args, cfg):
     svc.close()
 
 
+def cmd_fee(args, cfg):
+    svc, _ = _get_service(args, cfg)
+    ts = _parse_timestamp(args.timestamp)
+    amount_abs = _parse_decimal(args.amount, "amount")
+    venue = _require_venue(args, cfg)
+
+    result = svc.add_fee(
+        timestamp=ts, venue=venue, asset=args.asset.upper(),
+        amount_abs=amount_abs, note=args.note,
+    )
+    if result.success:
+        print("FEE zapsán.")
+    else:
+        print(f"Chyba: {', '.join(result.errors)}", file=sys.stderr)
+        svc.close()
+        sys.exit(1)
+    svc.close()
+
+
+def cmd_transfer(args, cfg):
+    svc, _ = _get_service(args, cfg)
+    ts = _parse_timestamp(args.timestamp)
+    amount = _parse_decimal(args.amount, "amount")
+    venue = _require_venue(args, cfg)
+
+    result = svc.add_transfer(
+        timestamp=ts, venue=venue, asset=args.asset.upper(),
+        amount=amount, note=args.note,
+    )
+    if result.success:
+        print("TRANSFER zapsán.")
+    else:
+        print(f"Chyba: {', '.join(result.errors)}", file=sys.stderr)
+        svc.close()
+        sys.exit(1)
+    svc.close()
+
+
 def cmd_trade(args, cfg):
     svc, _ = _get_service(args, cfg)
     ts = _parse_timestamp(args.timestamp)
@@ -263,6 +301,22 @@ def build_parser():
     p_add.add_argument("--timestamp", help="ISO 8601 (default: nyní)")
     p_add.add_argument("--note", help="Poznámka")
 
+    # fee
+    p_fee = sub.add_parser("fee", help="Přidej FEE tok (zjednodušený vstup)")
+    p_fee.add_argument("--asset", required=True, help="Aktivum (BTC, ETH, ...)")
+    p_fee.add_argument("--amount", required=True, help="Částka (kladné číslo)")
+    p_fee.add_argument("--venue", help="Místo toku (default z configu)")
+    p_fee.add_argument("--timestamp", help="ISO 8601 (default: nyní)")
+    p_fee.add_argument("--note", help="Poznámka")
+
+    # transfer
+    p_transfer = sub.add_parser("transfer", help="TRANSFER tok (příchozí/odchozí)")
+    p_transfer.add_argument("--asset", required=True, help="Aktivum (BTC, ETH, ...)")
+    p_transfer.add_argument("--amount", required=True, help="Množství se znaménkem (+ příchozí, - odchozí)")
+    p_transfer.add_argument("--venue", help="Místo toku (default z configu)")
+    p_transfer.add_argument("--note", required=True, help="Kam/odkud (povinné)")
+    p_transfer.add_argument("--timestamp", help="ISO 8601 (default: nyní)")
+
     # trade
     p_trade = sub.add_parser("trade", help="Double-entry obchod (2 řádky)")
     p_trade.add_argument("--type", required=True, help="BUY nebo SELL")
@@ -320,6 +374,8 @@ def main():
         "init": cmd_init,
         "import": cmd_import,
         "add": cmd_add,
+        "fee": cmd_fee,
+        "transfer": cmd_transfer,
         "trade": cmd_trade,
         "reversal": cmd_reversal,
         "diagnostics": cmd_diagnostics,

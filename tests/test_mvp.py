@@ -13,6 +13,8 @@ from core.model import RawRow
 from core.validator import validate_row, validate_rows
 from core.ledger_store import LedgerStore
 from core.trade import create_trade
+from core.fee import create_fee
+from core.transfer import create_transfer
 from io_module.raw_loader import load_raw
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -182,6 +184,77 @@ def test_trade_currency_invariant():
     print(f"  Trade currency invariant: BUY i SELL OK, currency = quote_asset, quote_amount = amount * price")
 
 
+def test_fee_helper():
+    """TEST 11: create_fee – ověření FEE invariantů."""
+    row = create_fee(
+        timestamp=datetime(2026, 3, 1, 12, 0, 0),
+        venue="kraken",
+        asset="BTC",
+        amount_abs=Decimal("0.001"),
+        note="withdrawal fee",
+    )
+    assert row.type == "FEE"
+    assert row.amount == Decimal("-0.001"), f"amount: {row.amount}"
+    assert row.currency == "BTC", f"currency: {row.currency}"
+    assert row.asset == "BTC"
+    assert row.price == Decimal("1")
+    assert row.venue == "kraken"
+    assert row.note == "withdrawal fee"
+
+    # Validace: amount_abs <= 0
+    try:
+        create_fee(datetime.now(), "kraken", "BTC", Decimal("0"))
+        assert False, "Mělo vyhodit ValueError"
+    except ValueError:
+        pass
+
+    print(f"  create_fee: FEE invarianty OK")
+
+
+def test_transfer_helper():
+    """TEST 12: create_transfer – ověření TRANSFER invariantů."""
+    row = create_transfer(
+        timestamp=datetime(2026, 3, 1, 12, 0, 0),
+        venue="bybit",
+        asset="ETH",
+        amount=Decimal("-0.5"),
+        note="LEDGER",
+    )
+    assert row.type == "TRANSFER"
+    assert row.amount == Decimal("-0.5"), f"amount: {row.amount}"
+    assert row.currency == "ETH", f"currency: {row.currency}"
+    assert row.asset == "ETH"
+    assert row.price == Decimal("1")
+    assert row.venue == "bybit"
+    assert row.note == "LEDGER"
+
+    # Kladný transfer (příchozí)
+    row_in = create_transfer(
+        timestamp=datetime(2026, 3, 1, 12, 5, 0),
+        venue="ledger",
+        asset="ETH",
+        amount=Decimal("0.5"),
+        note="BYBIT",
+    )
+    assert row_in.amount == Decimal("0.5")
+
+    # Validace: amount == 0
+    try:
+        create_transfer(datetime.now(), "kraken", "BTC", Decimal("0"), "test")
+        assert False, "Mělo vyhodit ValueError pro amount=0"
+    except ValueError:
+        pass
+
+    # Validace: note prázdné
+    try:
+        create_transfer(datetime.now(), "kraken", "BTC", Decimal("1"), "")
+        assert False, "Mělo vyhodit ValueError pro prázdný note"
+    except ValueError:
+        pass
+
+    print(f"  create_transfer: TRANSFER invarianty OK (odchozí i příchozí)")
+
+
 def main():
     store = setup()
     try:
@@ -225,8 +298,16 @@ def main():
         test_trade_currency_invariant()
         print("  PASS")
 
+        print("\nTEST 11: FEE helper")
+        test_fee_helper()
+        print("  PASS")
+
+        print("\nTEST 12: TRANSFER helper")
+        test_transfer_helper()
+        print("  PASS")
+
         print("\n" + "=" * 60)
-        print("  ALL 10 TESTS PASSED")
+        print("  ALL 12 TESTS PASSED")
         print("=" * 60)
     finally:
         teardown(store)

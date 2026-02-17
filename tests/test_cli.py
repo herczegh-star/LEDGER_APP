@@ -66,11 +66,45 @@ def test_export():
     print(f"  export: CSV created, {len(lines)-1} data row(s)")
 
 
+def test_fee():
+    """TEST 4: fee vytvoří 1 řádek se záporným amount."""
+    cleanup()
+    result = run_cli(
+        "fee", "--asset", "BTC", "--amount", "0.001",
+        "--venue", "kraken", "--note", "withdrawal fee",
+    )
+    assert result.returncode == 0, f"returncode={result.returncode}, stderr={result.stderr}"
+    assert "FEE" in result.stdout
+
+    bal = run_cli("balances")
+    assert bal.returncode == 0
+    assert "BTC" in bal.stdout
+    print(f"  fee: 1 row, BTC balance verified")
+
+
+def test_transfer():
+    """TEST 5: transfer vytvoří 1 řádek se znaménkem."""
+    cleanup()
+    result = run_cli(
+        "transfer", "--asset", "ETH", "--amount", "-0.5",
+        "--venue", "bybit", "--note", "LEDGER",
+    )
+    assert result.returncode == 0, f"returncode={result.returncode}, stderr={result.stderr}"
+    assert "TRANSFER" in result.stdout
+
+    bal = run_cli("balances")
+    assert bal.returncode == 0
+    assert "ETH" in bal.stdout
+    print(f"  transfer: 1 row, ETH balance verified")
+
+
 def main():
     tests = [
         ("TEST 1: CLI init", test_init),
         ("TEST 2: CLI trade", test_trade),
         ("TEST 3: CLI export", test_export),
+        ("TEST 4: CLI fee", test_fee),
+        ("TEST 5: CLI transfer", test_transfer),
     ]
 
     for name, test_fn in tests:
