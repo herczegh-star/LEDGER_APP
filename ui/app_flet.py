@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Krypto Snapshot – Flet desktop dashboard (read-only).
+"""LedgerApp – Flet desktop dashboard (read-only).
 
 Run:
     python ui/app_flet.py
@@ -9,7 +9,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from decimal import Decimal
-from datetime import datetime
 from typing import Optional
 
 import flet as ft
@@ -26,7 +25,6 @@ T_PRI    = "#e2e8f0"
 T_MUT    = "#64748b"
 GREEN    = "#22c55e"
 RED      = "#ef4444"
-AMBER    = "#f59e0b"
 BLUE     = "#1d4ed8"
 
 # ── Format helpers ─────────────────────────────────────────────────────────────
@@ -92,7 +90,7 @@ def main(page: ft.Page) -> None:
     cfg     = load_config()
     db_path = cfg["db_path"]
 
-    page.title       = "Krypto Snapshot"
+    page.title       = "LedgerApp"
     page.bgcolor     = BG
     page.theme_mode  = ft.ThemeMode.DARK
     page.padding     = 0
@@ -108,7 +106,6 @@ def main(page: ft.Page) -> None:
     w_val  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
     w_pnl  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
     w_roi  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
-    w_sync = ft.Text("",  size=11, color=T_MUT)
 
     # Dynamic regions (populated by render functions)
     pills_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
@@ -236,7 +233,6 @@ def main(page: ft.Page) -> None:
     def refresh(e=None) -> None:
         nonlocal raw
         raw = load_positions_view(db_path)
-        w_sync.value = f"Updated {datetime.now().strftime('%Y-%m-%dT%H:%M')}"
         update_kpis()
         build_pills()
         build_cards()
@@ -261,7 +257,7 @@ def main(page: ft.Page) -> None:
         # ── Header ──
         ft.Container(
             content=ft.Row([
-                ft.Text("Krypto Snapshot", size=20,
+                ft.Text("LedgerApp", size=20,
                         weight=ft.FontWeight.BOLD, color=T_PRI),
                 ft.Row([
                     ft.TextButton("Export", on_click=on_export,
@@ -276,26 +272,12 @@ def main(page: ft.Page) -> None:
 
         # ── KPI bar ──
         ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    kpi_box("Total Cost Basis", w_cost),
-                    kpi_box("Total Value",      w_val),
-                    kpi_box("Total PnL",        w_pnl),
-                    kpi_box("Total ROI",        w_roi),
-                ], spacing=0),
-                ft.Row([
-                    ft.Row([
-                        ft.Text("Sync", size=11, color=T_MUT),
-                        ft.Container(
-                            content=ft.Text("CACHE", size=10,
-                                            weight=ft.FontWeight.BOLD, color=AMBER),
-                            bgcolor="#2d1f00", border_radius=4,
-                            padding=ft.padding.symmetric(2, 6),
-                        ),
-                        w_sync,
-                    ], spacing=6),
-                ]),
-            ], spacing=6),
+            content=ft.Row([
+                kpi_box("Total Cost Basis", w_cost),
+                kpi_box("Total Value",      w_val),
+                kpi_box("Total PnL",        w_pnl),
+                kpi_box("Total ROI",        w_roi),
+            ], spacing=0),
             bgcolor=BG_HDR,
             padding=ft.padding.symmetric(10, 24),
             border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
