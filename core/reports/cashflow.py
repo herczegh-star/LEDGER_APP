@@ -18,6 +18,7 @@ from decimal import Decimal
 from typing import FrozenSet, List, Optional, Set
 
 from core.model import RawRow
+from core.dto.reporting import ReportMeta, TimeSeriesRow, TimeSeriesReport
 
 FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 
@@ -72,3 +73,37 @@ def cashflow(
     ]
     result.sort(key=lambda r: (r.date, r.currency))
     return result
+
+
+def cashflow_report(
+    rows: List[RawRow],
+    bucket: str = "day",
+    fiat: Optional[Set[str]] = None,
+) -> TimeSeriesReport:
+    """Same as cashflow(), but returns a TimeSeriesReport DTO.
+
+    Each TimeSeriesRow.values = {"net_amount": Decimal}.
+    totals = {currency: {"net_amount": total}} per currency.
+    """
+    if fiat is None:
+        fiat = FIAT_DEFAULT
+
+    cf_rows = cashflow(rows, bucket=bucket, fiat=fiat)
+
+    ts_rows = [
+        TimeSeriesRow(date=r.date, currency=r.currency, values={"net_amount": r.net_amount})
+        for r in cf_rows
+    ]
+
+    totals: dict = {}
+    for r in ts_rows:
+        cur = r.currency
+        if cur not in totals:
+            totals[cur] = {"net_amount": Decimal("0")}
+        totals[cur]["net_amount"] += r.values["net_amount"]
+
+    return TimeSeriesReport(
+        meta=ReportMeta(bucket=bucket, fiat=frozenset(fiat)),
+        rows=ts_rows,
+        totals=totals if totals else None,
+    )

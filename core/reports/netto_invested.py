@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import List, Optional, Set
 
 from core.reports.cashflow import cashflow as _cashflow, FIAT_DEFAULT
+from core.dto.reporting import ReportMeta, TimeSeriesRow, TimeSeriesReport
 
 
 @dataclass
@@ -94,3 +95,51 @@ def netto_invested(
     ]
     result.sort(key=lambda r: (r.date, r.currency))
     return result
+
+
+_NI_KEYS = ("invested_amount", "inflow_amount", "net_flow")
+
+
+def netto_invested_report(
+    rows: list,
+    bucket: str = "day",
+    fiat: Optional[Set[str]] = None,
+) -> TimeSeriesReport:
+    """Same as netto_invested(), but returns a TimeSeriesReport DTO.
+
+    Each TimeSeriesRow.values = {
+        "invested_amount": ..., "inflow_amount": ..., "net_flow": ...
+    }.
+    totals = {currency: {metric: total}} per currency.
+    """
+    if fiat is None:
+        fiat = FIAT_DEFAULT
+
+    ni_rows = netto_invested(rows, bucket=bucket, fiat=fiat)
+
+    ts_rows = [
+        TimeSeriesRow(
+            date=r.date,
+            currency=r.currency,
+            values={
+                "invested_amount": r.invested_amount,
+                "inflow_amount":   r.inflow_amount,
+                "net_flow":        r.net_flow,
+            },
+        )
+        for r in ni_rows
+    ]
+
+    totals: dict = {}
+    for r in ts_rows:
+        cur = r.currency
+        if cur not in totals:
+            totals[cur] = {k: Decimal("0") for k in _NI_KEYS}
+        for k in _NI_KEYS:
+            totals[cur][k] += r.values[k]
+
+    return TimeSeriesReport(
+        meta=ReportMeta(bucket=bucket, fiat=frozenset(fiat)),
+        rows=ts_rows,
+        totals=totals if totals else None,
+    )

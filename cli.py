@@ -280,18 +280,19 @@ def cmd_cashflow(args, cfg):
 
     fiat = set(args.fiat.upper().split(",")) if args.fiat else None
 
-    from core.reports.cashflow import cashflow
-    result = cashflow(rows, bucket=args.bucket, fiat=fiat)
+    from core.reports.cashflow import cashflow_report
+    report = cashflow_report(rows, bucket=args.bucket, fiat=fiat)
 
-    if not result:
+    if not report.rows:
         print("(žádné fiat toky)")
         return
 
     print(f"{'DATUM':<12} {'MĚNA':<6} {'NET FLOW':>18}")
     print(f"{'-'*12} {'-'*6} {'-'*18}")
-    for r in result:
-        sign = "+" if r.net_amount > 0 else ""
-        print(f"{r.date:<12} {r.currency:<6} {sign}{r.net_amount:>17}")
+    for r in report.rows:
+        v = r.values["net_amount"]
+        sign = "+" if v > 0 else ""
+        print(f"{r.date:<12} {r.currency:<6} {sign}{v:>17}")
 
 
 def cmd_netto_invested(args, cfg):
@@ -301,22 +302,23 @@ def cmd_netto_invested(args, cfg):
 
     fiat = set(args.fiat.upper().split(",")) if args.fiat else None
 
-    from core.reports.netto_invested import netto_invested
-    result = netto_invested(rows, bucket=args.bucket, fiat=fiat)
+    from core.reports.netto_invested import netto_invested_report
+    report = netto_invested_report(rows, bucket=args.bucket, fiat=fiat)
 
-    if not result:
+    if not report.rows:
         print("(žádné fiat toky)")
         return
 
     print(f"{'DATUM':<12} {'MĚNA':<6} {'INVESTED':>16} {'INFLOW':>16} {'NET FLOW':>16}")
     print(f"{'-'*12} {'-'*6} {'-'*16} {'-'*16} {'-'*16}")
-    for r in result:
-        sign = "+" if r.net_flow > 0 else ""
+    for r in report.rows:
+        v = r.values
+        sign = "+" if v["net_flow"] > 0 else ""
         print(
             f"{r.date:<12} {r.currency:<6}"
-            f" {r.invested_amount:>16}"
-            f" {r.inflow_amount:>16}"
-            f" {sign}{r.net_flow:>15}"
+            f" {v['invested_amount']:>16}"
+            f" {v['inflow_amount']:>16}"
+            f" {sign}{v['net_flow']:>15}"
         )
 
 
