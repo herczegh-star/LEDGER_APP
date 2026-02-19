@@ -283,6 +283,9 @@ def main(page: ft.Page) -> None:
     from ui.modules.reports import build_reports_view as _build_rv
     _reports_view, _run_report = _build_rv(page, db_path)
 
+    from ui.modules.positions_view import build_positions_view as _build_pv
+    _positions_wac_view, _run_positions = _build_pv(page, db_path)
+
     from ui.modules.add_trade_dialog import open_add_trade_dialog
     from ui.modules.import_dialog import open_import_dialog
 
@@ -293,9 +296,12 @@ def main(page: ft.Page) -> None:
         if idx == 0:
             _content.controls = [_positions_view]
             refresh()
-        else:
+        elif idx == 1:
             _content.controls = [_reports_view]
             _run_report()
+        else:  # idx == 2
+            _content.controls = [_positions_wac_view]
+            _run_positions()
         page.update()
 
     _nav = ft.NavigationRail(
@@ -307,13 +313,17 @@ def main(page: ft.Page) -> None:
         destinations=[
             ft.NavigationRailDestination(icon="dashboard_outlined",  label="Dashboard"),
             ft.NavigationRailDestination(icon="bar_chart_outlined",  label="Reports"),
+            ft.NavigationRailDestination(icon="table_chart_outlined", label="Positions"),
         ],
     )
 
     def _refresh_all() -> None:
         refresh()
-        if _content.controls and _content.controls[0] is _reports_view:
+        active = _content.controls[0] if _content.controls else None
+        if active is _reports_view:
             _run_report()
+        elif active is _positions_wac_view:
+            _run_positions()
 
     def on_add_trade(e) -> None:
         open_add_trade_dialog(page, db_path, _refresh_all)

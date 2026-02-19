@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, FrozenSet, List
 
+from core.dto.reporting import ReportMeta, TableReport, TableRow
 from core.model import RawRow
 
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
@@ -164,3 +165,37 @@ def compute_positions(
         ))
 
     return result
+
+
+def positions_report(
+    rows: List[RawRow],
+    fiat: FrozenSet[str] = _FIAT_DEFAULT,
+) -> TableReport:
+    """Wrap compute_positions() output in a TableReport DTO.
+
+    Args:
+        rows: All ledger rows (passed through to compute_positions).
+        fiat: Set of fiat asset symbols (default: EUR, CZK).
+
+    Returns:
+        TableReport with one TableRow per non-fiat asset, sorted alphabetically.
+        meta.kind == "snapshot" and meta.bucket == "snapshot".
+    """
+    fiat = frozenset(a.upper() for a in fiat)
+    positions = compute_positions(rows, fiat)
+
+    table_rows = [
+        TableRow(
+            key=pos.asset,
+            values={
+                "quantity":     pos.quantity,
+                "wac":          pos.wac,
+                "cost_basis":   pos.cost_basis,
+                "realized_pnl": pos.realized_pnl,
+            },
+        )
+        for pos in positions  # already sorted alphabetically by compute_positions
+    ]
+
+    meta = ReportMeta(bucket="snapshot", fiat=fiat, kind="snapshot")
+    return TableReport(meta=meta, rows=table_rows, totals=None)
