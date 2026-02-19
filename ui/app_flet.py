@@ -283,6 +283,8 @@ def main(page: ft.Page) -> None:
     from ui.modules.reports import build_reports_view as _build_rv
     _reports_view, _run_report = _build_rv(page, db_path)
 
+    from ui.modules.add_trade_dialog import open_add_trade_dialog
+
     _content = ft.Column([_positions_view], spacing=0, expand=True)
 
     def _on_nav(e) -> None:
@@ -307,6 +309,13 @@ def main(page: ft.Page) -> None:
         ],
     )
 
+    def on_add_trade(e) -> None:
+        def _refresh_all() -> None:
+            refresh()
+            if _content.controls and _content.controls[0] is _reports_view:
+                _run_report()
+        open_add_trade_dialog(page, db_path, _refresh_all)
+
     # ── Page layout ────────────────────────────────────────────────────────────
     page.add(
         ft.Container(
@@ -314,6 +323,8 @@ def main(page: ft.Page) -> None:
                 ft.Text("LedgerApp", size=20,
                         weight=ft.FontWeight.BOLD, color=T_PRI),
                 ft.Row([
+                    ft.TextButton("Add Trade", on_click=on_add_trade,
+                                  style=ft.ButtonStyle(color=GREEN)),
                     ft.TextButton("Export", on_click=on_export,
                                   style=ft.ButtonStyle(color=T_MUT)),
                     ft.TextButton("Refresh", on_click=refresh,
