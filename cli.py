@@ -294,6 +294,32 @@ def cmd_cashflow(args, cfg):
         print(f"{r.date:<12} {r.currency:<6} {sign}{r.net_amount:>17}")
 
 
+def cmd_netto_invested(args, cfg):
+    svc, _ = _get_service(args, cfg)
+    rows = svc.timeline()
+    svc.close()
+
+    fiat = set(args.fiat.upper().split(",")) if args.fiat else None
+
+    from core.reports.netto_invested import netto_invested
+    result = netto_invested(rows, bucket=args.bucket, fiat=fiat)
+
+    if not result:
+        print("(žádné fiat toky)")
+        return
+
+    print(f"{'DATUM':<12} {'MĚNA':<6} {'INVESTED':>16} {'INFLOW':>16} {'NET FLOW':>16}")
+    print(f"{'-'*12} {'-'*6} {'-'*16} {'-'*16} {'-'*16}")
+    for r in result:
+        sign = "+" if r.net_flow > 0 else ""
+        print(
+            f"{r.date:<12} {r.currency:<6}"
+            f" {r.invested_amount:>16}"
+            f" {r.inflow_amount:>16}"
+            f" {sign}{r.net_flow:>15}"
+        )
+
+
 def cmd_interactive(args, cfg):
     sys.argv = [sys.argv[0], cfg["db_path"]]
     from ui.terminal import main as terminal_main
@@ -387,6 +413,12 @@ def build_parser():
                       help="Časový bucket (default: month)")
     p_cf.add_argument("--fiat", help="Fiat měny oddělené čárkou (default: EUR,CZK)")
 
+    # netto-invested
+    p_ni = sub.add_parser("netto-invested", help="Netto investováno: hrubé výdaje a příjmy po bucketech")
+    p_ni.add_argument("--bucket", choices=["day", "week", "month"], default="month",
+                      help="Časový bucket (default: month)")
+    p_ni.add_argument("--fiat", help="Fiat měny oddělené čárkou (default: EUR,CZK)")
+
     # interactive
     sub.add_parser("interactive", help="Spusť interaktivní terminálové menu")
 
@@ -418,6 +450,7 @@ def main():
         "balances": cmd_balances,
         "timeline": cmd_timeline,
         "cashflow": cmd_cashflow,
+        "netto-invested": cmd_netto_invested,
         "interactive": cmd_interactive,
     }
 
