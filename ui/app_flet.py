@@ -252,9 +252,63 @@ def main(page: ft.Page) -> None:
             padding=ft.padding.symmetric(14, 20),
         )
 
+    # ── Build views ────────────────────────────────────────────────────────────
+    _positions_view = ft.Column([
+        ft.Container(
+            content=ft.Row([
+                kpi_box("Total Cost Basis", w_cost),
+                kpi_box("Total Value",      w_val),
+                kpi_box("Total PnL",        w_pnl),
+                kpi_box("Total ROI",        w_roi),
+            ], spacing=0),
+            bgcolor=BG_HDR,
+            padding=ft.padding.symmetric(10, 24),
+            border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+        ),
+        ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Text("Positions", size=16,
+                            weight=ft.FontWeight.BOLD, color=T_PRI),
+                    pills_row,
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                cards_col,
+            ], spacing=12, expand=True),
+            padding=ft.padding.symmetric(16, 24),
+            expand=True,
+        ),
+    ], spacing=0, expand=True)
+
+    from ui.modules.reports import build_reports_view as _build_rv
+    _reports_view, _run_report = _build_rv(page, db_path)
+
+    _content = ft.Column([_positions_view], spacing=0, expand=True)
+
+    def _on_nav(e) -> None:
+        idx = e.control.selected_index
+        if idx == 0:
+            _content.controls = [_positions_view]
+            refresh()
+        else:
+            _content.controls = [_reports_view]
+            _run_report()
+        page.update()
+
+    _nav = ft.NavigationRail(
+        selected_index=0,
+        on_change=_on_nav,
+        min_width=72,
+        bgcolor=BG_HDR,
+        indicator_color=BLUE,
+        destinations=[
+            ft.NavigationRailDestination(icon="dashboard_outlined",  label="Dashboard"),
+            ft.NavigationRailDestination(icon="bar_chart_outlined",  label="Reports"),
+        ],
+    )
+
     # ── Page layout ────────────────────────────────────────────────────────────
     page.add(
-        # ── Header ──
         ft.Container(
             content=ft.Row([
                 ft.Text("LedgerApp", size=20,
@@ -269,34 +323,11 @@ def main(page: ft.Page) -> None:
             bgcolor=BG_HDR,
             padding=ft.padding.symmetric(12, 24),
         ),
-
-        # ── KPI bar ──
-        ft.Container(
-            content=ft.Row([
-                kpi_box("Total Cost Basis", w_cost),
-                kpi_box("Total Value",      w_val),
-                kpi_box("Total PnL",        w_pnl),
-                kpi_box("Total ROI",        w_roi),
-            ], spacing=0),
-            bgcolor=BG_HDR,
-            padding=ft.padding.symmetric(10, 24),
-            border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
-        ),
-
-        # ── Positions ──
-        ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Text("Positions", size=16,
-                            weight=ft.FontWeight.BOLD, color=T_PRI),
-                    pills_row,
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                cards_col,
-            ], spacing=12, expand=True),
-            padding=ft.padding.symmetric(16, 24),
-            expand=True,
-        ),
+        ft.Row([
+            _nav,
+            ft.VerticalDivider(width=1, color=BORDER),
+            _content,
+        ], expand=True, spacing=0),
     )
 
     refresh()
