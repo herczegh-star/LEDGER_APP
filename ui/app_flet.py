@@ -284,6 +284,7 @@ def main(page: ft.Page) -> None:
     _reports_view, _run_report = _build_rv(page, db_path)
 
     from ui.modules.add_trade_dialog import open_add_trade_dialog
+    from ui.modules.import_dialog import open_import_dialog
 
     _content = ft.Column([_positions_view], spacing=0, expand=True)
 
@@ -309,12 +310,16 @@ def main(page: ft.Page) -> None:
         ],
     )
 
+    def _refresh_all() -> None:
+        refresh()
+        if _content.controls and _content.controls[0] is _reports_view:
+            _run_report()
+
     def on_add_trade(e) -> None:
-        def _refresh_all() -> None:
-            refresh()
-            if _content.controls and _content.controls[0] is _reports_view:
-                _run_report()
         open_add_trade_dialog(page, db_path, _refresh_all)
+
+    def on_import(e) -> None:
+        open_import_dialog(page, db_path, _refresh_all)
 
     # ── Page layout ────────────────────────────────────────────────────────────
     page.add(
@@ -325,6 +330,8 @@ def main(page: ft.Page) -> None:
                 ft.Row([
                     ft.TextButton("Add Trade", on_click=on_add_trade,
                                   style=ft.ButtonStyle(color=GREEN)),
+                    ft.TextButton("Import", on_click=on_import,
+                                  style=ft.ButtonStyle(color=BLUE)),
                     ft.TextButton("Export", on_click=on_export,
                                   style=ft.ButtonStyle(color=T_MUT)),
                     ft.TextButton("Refresh", on_click=refresh,
