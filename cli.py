@@ -273,6 +273,27 @@ def cmd_timeline(args, cfg):
     svc.close()
 
 
+def cmd_cashflow(args, cfg):
+    svc, _ = _get_service(args, cfg)
+    rows = svc.timeline()
+    svc.close()
+
+    fiat = set(args.fiat.upper().split(",")) if args.fiat else None
+
+    from core.reports.cashflow import cashflow
+    result = cashflow(rows, bucket=args.bucket, fiat=fiat)
+
+    if not result:
+        print("(žádné fiat toky)")
+        return
+
+    print(f"{'DATUM':<12} {'MĚNA':<6} {'NET FLOW':>18}")
+    print(f"{'-'*12} {'-'*6} {'-'*18}")
+    for r in result:
+        sign = "+" if r.net_amount > 0 else ""
+        print(f"{r.date:<12} {r.currency:<6} {sign}{r.net_amount:>17}")
+
+
 def cmd_interactive(args, cfg):
     sys.argv = [sys.argv[0], cfg["db_path"]]
     from ui.terminal import main as terminal_main
@@ -360,6 +381,12 @@ def build_parser():
     # timeline
     sub.add_parser("timeline", help="Zobraz timeline všech toků")
 
+    # cashflow
+    p_cf = sub.add_parser("cashflow", help="Cashflow report: čistý fiat tok po bucketech")
+    p_cf.add_argument("--bucket", choices=["day", "week", "month"], default="month",
+                      help="Časový bucket (default: month)")
+    p_cf.add_argument("--fiat", help="Fiat měny oddělené čárkou (default: EUR,CZK)")
+
     # interactive
     sub.add_parser("interactive", help="Spusť interaktivní terminálové menu")
 
@@ -390,6 +417,7 @@ def main():
         "export": cmd_export,
         "balances": cmd_balances,
         "timeline": cmd_timeline,
+        "cashflow": cmd_cashflow,
         "interactive": cmd_interactive,
     }
 
