@@ -20,25 +20,11 @@ from typing import Callable, List, Optional
 
 from core.config import load_config
 from core.service import LedgerService
-from ledger_engine.fx_provider import FxProvider, DictFxProvider
+from ledger_engine.fx_provider import FxProvider, ConfigFxProvider
 from ledger_engine.positions_engine import compute_positions
 
 
-class _HardcodedFxProvider(FxProvider):
-    """Stub FX provider – vrací fixní kurz EUR/CZK pro všechna data.
-
-    Nahradit reálným zdrojem (CNB API, local cache) až bude k dispozici.
-    Defaultně 25 CZK za 1 EUR.
-    """
-
-    def __init__(self, eur_to_czk: Decimal = Decimal("25")) -> None:
-        self._rate = eur_to_czk
-
-    def get_eur_to_czk(self, date: str) -> Decimal:
-        return self._rate
-
-
-DEFAULT_FX = _HardcodedFxProvider()
+DEFAULT_FX = ConfigFxProvider()
 
 
 def load_positions_view(
