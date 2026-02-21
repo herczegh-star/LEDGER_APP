@@ -363,6 +363,7 @@ def main(page: ft.Page) -> None:
 
     from ui.modules.add_trade_dialog import open_add_trade_dialog
     from ui.modules.import_dialog import open_import_dialog
+    from ui.modules.reversal_dialog import open_reversal_dialog
 
     _content = ft.Column([_positions_view], spacing=0, expand=True)
 
@@ -406,6 +407,9 @@ def main(page: ft.Page) -> None:
     def on_import(e) -> None:
         open_import_dialog(page, db_path, _refresh_all)
 
+    def on_reverse(e) -> None:
+        open_reversal_dialog(page, db_path, _refresh_all)
+
     # ── Page layout ────────────────────────────────────────────────────────────
     page.add(
         ft.Container(
@@ -415,6 +419,8 @@ def main(page: ft.Page) -> None:
                 ft.Row([
                     ft.TextButton("Add Trade", on_click=on_add_trade,
                                   style=ft.ButtonStyle(color=GREEN)),
+                    ft.TextButton("Reverse", on_click=on_reverse,
+                                  style=ft.ButtonStyle(color="#f97316")),
                     ft.TextButton("Import", on_click=on_import,
                                   style=ft.ButtonStyle(color=BLUE)),
                     ft.TextButton("Export", on_click=on_export,
