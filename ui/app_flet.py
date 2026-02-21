@@ -14,6 +14,8 @@ from typing import Optional
 import flet as ft
 
 from core.config import load_config
+from core.service import LedgerService
+from core.services.portfolio_snapshot_service import get_portfolio_snapshot
 from ui.adapters import load_positions_view
 
 # ── Color palette ──────────────────────────────────────────────────────────────
@@ -106,6 +108,12 @@ def main(page: ft.Page) -> None:
     w_val  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
     w_pnl  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
     w_roi  = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
+
+    # ── Snapshot text widgets ──────────────────────────────────────────────────
+    snap_invested_txt = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
+    snap_net_flow_txt = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_MUT)
+    snap_assets_txt   = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
+    snap_top_pos_txt  = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
 
     # Dynamic regions (populated by render functions)
     pills_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
@@ -229,11 +237,52 @@ def main(page: ft.Page) -> None:
         cards_col.controls = [make_card(p) for p in _sort(raw, state["sort"])]
         cards_col.update()
 
+    # ── Snapshot helpers ───────────────────────────────────────────────────────
+    def _fmt_multi(d: dict, *, sign: bool = False) -> str:
+        """Format a per-currency Decimal dict as a human-readable string."""
+        if not d:
+            return "—"
+        parts = []
+        for cur in sorted(d.keys()):
+            val = d[cur]
+            n = f"{abs(val):,.0f}".replace(",", "\u00a0")
+            if val < 0:
+                s = f"−{n} {cur}"
+            elif sign and val > 0:
+                s = f"+{n} {cur}"
+            else:
+                s = f"{n} {cur}"
+            parts.append(s)
+        return "  /  ".join(parts)
+
+    def update_snapshot(snap) -> None:
+        snap_invested_txt.value = _fmt_multi(snap.invested)
+        net_color = _color(next(iter(snap.net_flow.values()), None))
+        snap_net_flow_txt.value = _fmt_multi(snap.net_flow, sign=True)
+        snap_net_flow_txt.color = net_color if snap.net_flow else T_MUT
+        snap_assets_txt.value = str(snap.assets_held)
+        if snap.top_position:
+            asset = snap.top_position["asset"]
+            cb = snap.top_position["cost_basis"]
+            cb_str = f"{cb:,.0f}".replace(",", "\u00a0")
+            snap_top_pos_txt.value = f"{asset}  ·  {cb_str}"
+        else:
+            snap_top_pos_txt.value = "—"
+
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
         nonlocal raw
         raw = load_positions_view(db_path)
+
+        svc = LedgerService(db_path)
+        try:
+            rows = svc.timeline()
+        finally:
+            svc.close()
+        snap = get_portfolio_snapshot(rows)
+
         update_kpis()
+        update_snapshot(snap)
         build_pills()
         build_cards()
         page.update()
@@ -252,6 +301,31 @@ def main(page: ft.Page) -> None:
             padding=ft.padding.symmetric(14, 20),
         )
 
+    # ── Snapshot strip helper ──────────────────────────────────────────────────
+    def _snap_card(label: str, widget: ft.Text) -> ft.Container:
+        return ft.Container(
+            content=ft.Column(
+                [ft.Text(label, size=11, color=T_MUT), widget],
+                spacing=4, tight=True,
+            ),
+            bgcolor=BG_CARD,
+            border=ft.border.all(1, BORDER),
+            border_radius=8,
+            padding=ft.padding.symmetric(10, 16),
+            expand=True,
+        )
+
+    _snapshot_strip = ft.Container(
+        content=ft.Row([
+            _snap_card("Net Invested",  snap_invested_txt),
+            _snap_card("Net Flow",      snap_net_flow_txt),
+            _snap_card("Assets Held",   snap_assets_txt),
+            _snap_card("Top Position",  snap_top_pos_txt),
+        ], spacing=12),
+        padding=ft.padding.symmetric(10, 24),
+        border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+    )
+
     # ── Build views ────────────────────────────────────────────────────────────
     _positions_view = ft.Column([
         ft.Container(
@@ -265,6 +339,7 @@ def main(page: ft.Page) -> None:
             padding=ft.padding.symmetric(10, 24),
             border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
         ),
+        _snapshot_strip,
         ft.Container(
             content=ft.Column([
                 ft.Row([
