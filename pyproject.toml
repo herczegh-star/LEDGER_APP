@@ -1,6 +1,6 @@
 [project]
 name = "ledger-app"
-version = "0.2.0"
+version = "1.0.0"
 description = "Investiční portfolio tracker nad unified_format_raw"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,10 +9,11 @@ dependencies = [
 ]
 
 [project.scripts]
-ledger-app = "cli:main"
-
-[tool.setuptools]
-py-modules = ["cli", "main"]
+ledgerapp = "ledger_app.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["core*", "io_module*", "ui*"]
+include = ["core*", "io_module*", "ui*", "cli*", "ledger_app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tests/legacy", ".venv", "__pycache__", ".git"]

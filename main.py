@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Ledger App – entry point.
+"""Ledger App – legacy entry-point shim.
 
-Default: launches the Flet desktop UI.
-Pass --cli to use the terminal UI instead.
+Prefer the module form:
+    python -m ledger_app
+    python -m ledger_app --cli
+
+This file exists for backward compatibility with direct invocation.
 """
-import sys
 import os
+import sys
 
+# Ensure project root is on sys.path for direct invocation (not needed when
+# running as an installed package or via `python -m ledger_app`).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-if "--cli" in sys.argv:
-    from cli.terminal import main
-    main()
-else:
-    from ui.app_flet import run_ui
-    run_ui()
+from ledger_app.__main__ import main
+
+main()

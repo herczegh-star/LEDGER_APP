@@ -1,12 +1,28 @@
 # How to Run Ledger App
 
-## Desktop UI (default)
+## Desktop UI (recommended)
 
-    python main.py
+    python -m ledger_app
 
 ## CLI mode
 
+    python -m ledger_app --cli
+
+## Help
+
+    python -m ledger_app --help
+
+## Legacy shim (backward compatible)
+
+    python main.py
     python main.py --cli
+
+## Installed console script
+
+After `pip install -e .`:
+
+    ledgerapp
+    ledgerapp --cli
 
 ## Architecture note
 

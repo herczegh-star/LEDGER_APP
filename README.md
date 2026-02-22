@@ -11,14 +11,18 @@ nikoli pro jeho interpretaci; pravda je v datech, nikoli v kódu.
 ## Spuštění
 
 ```bash
-# Desktop UI (výchozí)
-python main.py
+# Desktop UI (výchozí / doporučeno)
+python -m ledger_app
 
 # CLI režim
+python -m ledger_app --cli
+
+# Alternativní (legacy shim)
+python main.py
 python main.py --cli
 ```
 
-Jediný podporovaný vstupní bod je `main.py`.
+Po instalaci (`pip install -e .`) je k dispozici konzolový příkaz `ledgerapp`.
 
 ## Architektura
 
