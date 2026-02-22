@@ -128,10 +128,46 @@ def test_transfer_price_zero_row_type_correct(db):
 
 
 def test_fee_price_zero_ok(db):
-    """FEE also allows price=0."""
+    """FEE with price=0 is allowed when asset == currency (fiat fee)."""
     result = add_trade(
         _req(type="FEE", price=Decimal("0"), quote_amount=None,
              asset="BTC", currency="BTC", amount=Decimal("-0.001")),
+        db,
+    )
+    assert result.success, result.error_message
+    assert result.n_rows_added > 0
+
+
+# ── KROK 4.1: FEE price=0 only when asset == currency ─────────────────────────
+
+def test_fee_fiat_price_zero_passes(db):
+    """FEE asset=CZK currency=CZK price=0 → allowed (fiat-denominated fee)."""
+    result = add_trade(
+        _req(type="FEE", asset="CZK", currency="CZK",
+             amount=Decimal("-25"), price=Decimal("0"), quote_amount=None),
+        db,
+    )
+    assert result.success, result.error_message
+    assert result.n_rows_added > 0
+
+
+def test_fee_crypto_price_zero_fails(db):
+    """FEE asset=ETH currency=CZK price=0 → rejected (ambiguous valuation)."""
+    result = add_trade(
+        _req(type="FEE", asset="ETH", currency="CZK",
+             amount=Decimal("-0.002"), price=Decimal("0"), quote_amount=None),
+        db,
+    )
+    assert not result.success
+    assert result.n_rows_added == 0
+    assert result.error_message
+
+
+def test_fee_crypto_price_nonzero_passes(db):
+    """FEE asset=ETH currency=CZK price>0 → allowed (fiat value expressed)."""
+    result = add_trade(
+        _req(type="FEE", asset="ETH", currency="CZK",
+             amount=Decimal("-0.002"), price=Decimal("65000"), quote_amount=None),
         db,
     )
     assert result.success, result.error_message

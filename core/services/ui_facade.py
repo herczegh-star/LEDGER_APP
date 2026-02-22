@@ -317,6 +317,20 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
     # currency defaults to asset when not provided (common for FEE/TRANSFER).
     eff_currency = currency or asset
 
+    # FEE with price=0 is only valid when asset == currency (fiat-denominated
+    # fee where the amount already expresses the fiat cost; no conversion needed).
+    # If asset != currency the caller must supply price > 0.
+    if request.type == "FEE" and price == _ZERO and asset != eff_currency:
+        return AddTradeResultDTO(
+            success=False, n_rows_added=0,
+            error_message=(
+                "FEE with price=0 is only allowed when asset == currency "
+                "(fiat-denominated fee). "
+                f"Got asset={asset!r}, currency={eff_currency!r}. "
+                "Provide price > 0 to express the fiat value of the fee."
+            ),
+        )
+
     row = RawRow(
         id=str(uuid.uuid4()),
         timestamp=request.timestamp,
