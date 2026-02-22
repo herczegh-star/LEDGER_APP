@@ -324,7 +324,7 @@ def cmd_netto_invested(args, cfg):
 
 def cmd_interactive(args, cfg):
     sys.argv = [sys.argv[0], cfg["db_path"]]
-    from ui.terminal import main as terminal_main
+    from cli.terminal import main as terminal_main
     terminal_main()
 
 
@@ -459,5 +459,7 @@ def main():
     commands[args.command](args, cfg)
 
 
+# Internal CLI module. Official entry point: `python main.py --cli`.
+# Direct invocation (`python cli.py`) is supported for integration tests only.
 if __name__ == "__main__":
     main()

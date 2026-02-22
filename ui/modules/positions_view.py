@@ -1,12 +1,12 @@
-"""Positions view: WAC-based per-asset table rendered from TableReport DTO.
+"""Positions view: per-asset table with WAC + live-price enrichment.
 
 Public API:
-    build_positions_view(page, db_path) -> (ft.Column, Callable)
+    build_positions_view(page, db_path, price_provider, fiat) -> (ft.Column, Callable)
 
-    filter_and_sort_rows(rows, search, hide_zeros, sort_key) -> list[TableRow]
+    filter_and_sort_rows(rows, search, hide_zeros, sort_key) -> list[PositionDTO]
         Pure helper — usable in tests without a Flet page.
 
-UI only. All computation delegated to core/services/report_service.get_positions_report().
+UI only. All data fetched via core/services/ui_facade.get_positions_full().
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from typing import Callable, Tuple
 import flet as ft
 
 from core.services.ui_facade import (
-    export_table_report_to_csv,
-    get_positions_table_report,
+    export_positions_to_csv,
+    get_positions_full,
 )
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
@@ -30,16 +30,16 @@ T_PRI   = "#e2e8f0"
 T_MUT   = "#64748b"
 GREEN   = "#22c55e"
 RED     = "#ef4444"
-ORANGE  = "#f97316"
 
 _EXPORTS_DIR = os.path.join(os.getcwd(), "exports")
 
-# Column definitions: (values dict key, display header)
+# Column definitions: (PositionDTO attribute name, display header)
 _COLS = [
-    ("quantity",     "Quantity"),
-    ("wac",          "WAC"),
-    ("cost_basis",   "Cost Basis"),
-    ("realized_pnl", "Realized P&L"),
+    ("quantity",       "Quantity"),
+    ("cost_basis",     "Cost Basis"),
+    ("realized_pnl",   "Realized P&L"),
+    ("unrealized_pnl", "Unrealized P&L"),
+    ("roi_total",      "ROI Total"),
 ]
 
 # Sort option definitions: (dropdown key, label)
@@ -61,16 +61,16 @@ def filter_and_sort_rows(
     hide_zeros: bool = False,
     sort_key: str = "az",
 ) -> list:
-    """Filter and sort a list of TableRow objects.
+    """Filter and sort a list of PositionDTO objects.
 
     This is a pure function with no UI dependencies — it can be unit-tested
     independently from the Flet view.
 
     Args:
-        rows:       TableRow list from a TableReport (e.g. positions report).
-        search:     Case-insensitive substring filter on ``row.key`` (asset name).
+        rows:       PositionDTO list (from get_positions_full()).
+        search:     Case-insensitive substring filter on ``p.asset``.
                     Empty string disables the filter.
-        hide_zeros: If True, rows where ``values["quantity"] == 0`` are excluded.
+        hide_zeros: If True, rows where ``p.quantity == 0`` are excluded.
         sort_key:   One of "az", "cost_desc", "qty_desc", "pnl_desc".
 
     Returns:
@@ -81,33 +81,21 @@ def filter_and_sort_rows(
     # ── Filter: search ────────────────────────────────────────────────────────
     if search:
         needle = search.strip().lower()
-        result = [r for r in result if needle in r.key.lower()]
+        result = [p for p in result if needle in p.asset.lower()]
 
     # ── Filter: hide zero positions ───────────────────────────────────────────
     if hide_zeros:
-        result = [
-            r for r in result
-            if r.values.get("quantity", _ZERO) != _ZERO
-        ]
+        result = [p for p in result if p.quantity != _ZERO]
 
     # ── Sort ──────────────────────────────────────────────────────────────────
     if sort_key == "az":
-        result.sort(key=lambda r: r.key)
+        result.sort(key=lambda p: p.asset)
     elif sort_key == "cost_desc":
-        result.sort(
-            key=lambda r: r.values.get("cost_basis", _ZERO),
-            reverse=True,
-        )
+        result.sort(key=lambda p: p.cost_basis, reverse=True)
     elif sort_key == "qty_desc":
-        result.sort(
-            key=lambda r: r.values.get("quantity", _ZERO),
-            reverse=True,
-        )
+        result.sort(key=lambda p: p.quantity, reverse=True)
     elif sort_key == "pnl_desc":
-        result.sort(
-            key=lambda r: r.values.get("realized_pnl", _ZERO),
-            reverse=True,
-        )
+        result.sort(key=lambda p: p.realized_pnl, reverse=True)
     # Unknown sort_key falls back to list order (which is already "az" from report)
 
     return result
@@ -132,19 +120,36 @@ def _fmt(val) -> str:
     return s
 
 
+def _fmt_roi(val) -> str:
+    """Format roi_total fraction (0.1234) as '+12.34%'. Returns '—' for None."""
+    if val is None:
+        return "—"
+    sign = "+" if val >= _ZERO else ""
+    return f"{sign}{float(val) * 100:.2f}%"
+
+
 # ── View builder ─────────────────────────────────────────────────────────────
 
-def build_positions_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable]:
+def build_positions_view(
+    page: ft.Page,
+    db_path: str,
+    price_provider=None,
+    fiat: str = "CZK",
+) -> Tuple[ft.Column, Callable]:
     """Return (view_control, run_fn) for the Positions tab.
 
     The view is built once; run_fn is called each time the tab becomes active
     or data changes (e.g. after Add Trade or Import).  Filter/sort controls
     update the rendered table without re-fetching from the database.
+
+    Args:
+        page:           Flet Page (for show_dialog / update).
+        db_path:        SQLite ledger path.
+        price_provider: Optional price provider for unrealized_pnl enrichment.
+        fiat:           Fiat currency for price queries (default "CZK").
     """
-    # ── State: cached report rows ────────────────────────────────────────────
-    # Holds the last fetched report so filter/sort can re-render without a
-    # database roundtrip.
-    _report_holder: list = [None]   # [TableReport | None]
+    # ── State: cached PositionDTO list ────────────────────────────────────────
+    _report_holder: list = [None]   # [list[PositionDTO] | None]
 
     # ── Controls ─────────────────────────────────────────────────────────────
     tf_search = ft.TextField(
@@ -195,26 +200,30 @@ def build_positions_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callab
 
     # ── Render: apply filter/sort and rebuild table ───────────────────────────
     def _render() -> None:
-        report = _report_holder[0]
-        source_rows = report.rows if report is not None else []
-        total_source = len(source_rows)
+        source = _report_holder[0] or []
+        total_source = len(source)
 
         visible = filter_and_sort_rows(
-            source_rows,
+            source,
             search=tf_search.value or "",
             hide_zeros=cb_hide_zeros.value or False,
             sort_key=dd_sort.value or "az",
         )
 
         data_rows = []
-        for tr in visible:
-            cells = [ft.DataCell(ft.Text(tr.key, color=T_PRI, size=12))]
+        for p in visible:
+            cells = [ft.DataCell(ft.Text(p.asset, color=T_PRI, size=12))]
             for key, _ in _COLS:
-                val = tr.values.get(key)
-                color = T_PRI
-                if key == "realized_pnl" and val is not None:
-                    color = GREEN if val >= _ZERO else RED
-                cells.append(ft.DataCell(ft.Text(_fmt(val), color=color, size=12)))
+                if key == "roi_total":
+                    val = getattr(p, key, None)
+                    color = T_PRI if val is None else (GREEN if val >= _ZERO else RED)
+                    cells.append(ft.DataCell(ft.Text(_fmt_roi(val), color=color, size=12)))
+                else:
+                    val = getattr(p, key, None)
+                    color = T_PRI
+                    if key in ("realized_pnl", "unrealized_pnl") and val is not None:
+                        color = GREEN if val >= _ZERO else RED
+                    cells.append(ft.DataCell(ft.Text(_fmt(val), color=color, size=12)))
             data_rows.append(ft.DataRow(cells=cells))
 
         if data_rows:
@@ -246,30 +255,21 @@ def build_positions_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callab
         page.update()
 
     # ── Control callbacks (filter/sort only — no DB re-fetch) ─────────────────
-    def _on_search(_e=None) -> None:
-        _render()
-
-    def _on_hide_zeros(_e=None) -> None:
-        _render()
-
-    def _on_sort(_e=None) -> None:
-        _render()
-
-    tf_search.on_change    = _on_search
-    cb_hide_zeros.on_change = _on_hide_zeros
-    dd_sort.on_change      = _on_sort
+    tf_search.on_change     = lambda _e=None: _render()
+    cb_hide_zeros.on_change = lambda _e=None: _render()
+    dd_sort.on_change       = lambda _e=None: _render()
 
     # ── Export button ─────────────────────────────────────────────────────────
     def _on_export(_e=None) -> None:
-        report = _report_holder[0]
-        if report is None or not report.rows:
+        source = _report_holder[0]
+        if not source:
             page.show_dialog(ft.SnackBar(ft.Text("No positions to export."), duration=2000))
             return
         try:
             os.makedirs(_EXPORTS_DIR, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M")
             out_path = os.path.join(_EXPORTS_DIR, f"positions_{ts}.csv")
-            saved = export_table_report_to_csv(report, out_path)
+            saved = export_positions_to_csv(db_path, out_path)
             page.show_dialog(ft.SnackBar(ft.Text(f"Saved: {saved}"), duration=4000))
         except Exception as exc:  # noqa: BLE001
             page.show_dialog(ft.SnackBar(ft.Text(f"Export failed: {exc}"), duration=4000))
@@ -282,7 +282,7 @@ def build_positions_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callab
 
     # ── Main run function (fetches from DB, then renders) ─────────────────────
     def run_report(e=None) -> None:
-        _report_holder[0] = get_positions_table_report(db_path)
+        _report_holder[0] = get_positions_full(db_path, price_provider, fiat)
         _render()
 
     # ── View layout ──────────────────────────────────────────────────────────

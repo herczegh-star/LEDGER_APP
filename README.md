@@ -1,45 +1,43 @@
-# Ledger App – MVP
+# Ledger App – v1
 
 Investiční portfolio tracker nad `unified_format_raw`.
+Desktop aplikace v Pythonu s Flet UI.
 
 ## Filozofie
 
 Aplikace je nástroj pro čtení a vytváření tokového ledgeru,
 nikoli pro jeho interpretaci; pravda je v datech, nikoli v kódu.
 
-## Struktura projektu
-
-```
-ledger_app/
-├── main.py              # Entry point
-├── core/
-│   ├── model.py         # RawRow datový model
-│   ├── validator.py     # Syntaktická validace
-│   └── ledger_store.py  # SQLite append-only DB
-├── io_module/
-│   └── raw_loader.py    # Načítání *_raw.xlsm / .csv
-├── ui/
-│   └── terminal.py      # Terminálové UI (nahraditelné Fletem)
-└── test_mvp.py          # Testy MVP kritérií
-```
-
 ## Spuštění
 
 ```bash
-python main.py [cesta_k_databazi.db]
+# Desktop UI (výchozí)
+python main.py
+
+# CLI režim
+python main.py --cli
 ```
 
-## MVP kritéria (splněno ✓)
+Jediný podporovaný vstupní bod je `main.py`.
 
-- ✓ Načtu RAW soubory → vidím všechny toky
-- ✓ Načtu je znovu → nic nepřibyde (deduplikace)
-- ✓ Přidám ručně tok → objeví se v timeline
-- ✓ Udělám chybu → opravím přes REVERSAL
-- ✓ Vše ostatní se vždy přepočítá
+## Architektura
+
+```
+I/O Modul  →  CORE (doménová logika)  →  ui_facade  →  Flet UI
+```
+
+- Core je jediný zdroj pravdy.
+- UI importuje výhradně z `core.services.ui_facade` a `core.constants`.
+- Ledger je append-only SQLite; opravy jdou přes REVERSAL.
+- Offline provoz je plně podporován (live ceny jsou volitelné).
 
 ## Závislosti
 
 - Python 3.10+
-- openpyxl (pro čtení .xlsm)
+- Flet (desktop UI)
+- openpyxl (čtení .xlsm)
 - SQLite (součást Pythonu)
-- Flet (pro GUI – zatím nahrazeno terminálovým UI)
+
+## Konfigurace
+
+Nastavení DB a cen je v `ledger.ini` (vytvoří se automaticky při prvním spuštění).

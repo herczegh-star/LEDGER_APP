@@ -418,6 +418,59 @@ def get_positions_table_report(db_path: str):
     return _gpr(rows)
 
 
+def get_positions_full(
+    db_path: str,
+    price_provider=None,
+    fiat: str = "CZK",
+) -> list:
+    """Return list[PositionDTO] for ALL assets (including closed quantity=0).
+
+    When price_provider is supplied, enriches each PositionDTO with
+    unrealized_pnl, roi_total, value, and spot_price.
+    Those fields are None when no price provider is configured.
+
+    Unlike get_dashboard_snapshot(), this includes zero-quantity (closed) positions.
+    """
+    fiat_uc = fiat.upper()
+
+    svc = LedgerService(db_path)
+    try:
+        rows = svc.timeline()
+    finally:
+        svc.close()
+
+    raw_positions = compute_positions(rows, _FIAT_DEFAULT)
+    positions: list = []
+    for pos in raw_positions:
+        roi_real = (
+            (pos.realized_pnl / pos.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+            if pos.cost_basis != _ZERO
+            else None
+        )
+        positions.append(PositionDTO(
+            asset=pos.asset,
+            quantity=pos.quantity,
+            wac=pos.wac,
+            cost_basis=pos.cost_basis,
+            realized_pnl=pos.realized_pnl,
+            roi_realized=roi_real,
+        ))
+
+    if price_provider is not None and positions:
+        assets = [p.asset for p in positions]
+        prices = price_provider.get_prices(assets, fiat_uc)
+        for p in positions:
+            spot = prices.get(p.asset)
+            p.spot_price = spot
+            if spot is not None:
+                p.value = p.quantity * spot
+                if p.cost_basis > _ZERO:
+                    p.unrealized_pnl = p.value - p.cost_basis
+                    p.roi_total = p.unrealized_pnl / p.cost_basis
+
+    return positions
+
+
 # ── Time-series reports ────────────────────────────────────────────────────────
 
 def get_time_series_report(

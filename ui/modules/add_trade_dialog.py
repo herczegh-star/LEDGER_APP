@@ -1,9 +1,9 @@
-"""Add Trade dialog: Flet modal for entering a new BUY/SELL trade.
+"""Add Trade dialog: Flet modal for entering a new trade (BUY/SELL/TRANSFER/FEE).
 
 Public API:
     open_add_trade_dialog(page, db_path, on_success) -> None
 
-UI only. All computation delegated to core/services/trade_service.py.
+UI only. All computation and validation delegated to core/services/ui_facade.add_trade().
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ T_PRI   = "#e2e8f0"
 T_MUT   = "#64748b"
 GREEN   = "#22c55e"
 RED     = "#ef4444"
-BLUE    = "#1d4ed8"
 
 
 def open_add_trade_dialog(
@@ -37,10 +36,12 @@ def open_add_trade_dialog(
     now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     # ── Form fields ─────────────────────────────────────────────────────────
-    _DIALOG_TYPES = [t for t in TRADE_TYPES if t in ("BUY", "SELL")]
+    # All TRADE_TYPES except REVERSAL (REVERSAL uses the dedicated Reverse button).
+    _DIALOG_TYPES = [t for t in TRADE_TYPES if t != "REVERSAL"]
+
     dd_type = ft.Dropdown(
         label="Type",
-        width=120,
+        width=140,
         bgcolor=BG_CARD,
         border_color=BORDER,
         text_style=ft.TextStyle(color=T_PRI, size=13),
@@ -60,7 +61,7 @@ def open_add_trade_dialog(
     )
 
     tf_base_asset = ft.TextField(
-        label="Base Asset",
+        label="Asset",
         hint_text="BTC",
         bgcolor=BG_CARD,
         border_color=BORDER,
@@ -71,7 +72,7 @@ def open_add_trade_dialog(
     )
 
     tf_base_amount = ft.TextField(
-        label="Base Amount",
+        label="Amount",
         hint_text="0.5",
         bgcolor=BG_CARD,
         border_color=BORDER,
@@ -80,22 +81,20 @@ def open_add_trade_dialog(
         expand=True,
     )
 
-    dd_quote_currency = ft.Dropdown(
-        label="Quote Currency",
-        width=130,
+    tf_currency = ft.TextField(
+        label="Currency",
+        hint_text="EUR / CZK / BTC …",
         bgcolor=BG_CARD,
         border_color=BORDER,
-        text_style=ft.TextStyle(color=T_PRI, size=13),
-        options=[
-            ft.dropdown.Option("EUR", "EUR"),
-            ft.dropdown.Option("CZK", "CZK"),
-        ],
-        value="EUR",
+        color=T_PRI,
+        label_style=ft.TextStyle(color=T_MUT),
+        width=140,
+        capitalization=ft.TextCapitalization.CHARACTERS,
     )
 
-    tf_quote_amount = ft.TextField(
-        label="Quote Amount",
-        hint_text="25000",
+    tf_price = ft.TextField(
+        label="Price",
+        hint_text="50000  (0 for TRANSFER/FEE)",
         bgcolor=BG_CARD,
         border_color=BORDER,
         color=T_PRI,
@@ -155,7 +154,7 @@ def open_add_trade_dialog(
         error_text.value = ""
         page.update()
 
-        # Parse fields
+        # Parse timestamp
         try:
             ts = datetime.fromisoformat(tf_timestamp.value.strip())
         except ValueError:
@@ -163,20 +162,24 @@ def open_add_trade_dialog(
             page.update()
             return
 
+        # Parse amount
         try:
             base_amount = Decimal(tf_base_amount.value.strip())
         except InvalidOperation:
-            error_text.value = "Invalid base amount"
+            error_text.value = "Invalid amount"
             page.update()
             return
 
+        # Parse price (default 0 when blank)
+        raw_price = tf_price.value.strip()
         try:
-            quote_amount = Decimal(tf_quote_amount.value.strip())
+            price = Decimal(raw_price) if raw_price else Decimal("0")
         except InvalidOperation:
-            error_text.value = "Invalid quote amount"
+            error_text.value = "Invalid price"
             page.update()
             return
 
+        # Parse optional fee amount
         fee_amount: "Decimal | None" = None
         raw_fee = tf_fee_amount.value.strip()
         if raw_fee:
@@ -194,13 +197,13 @@ def open_add_trade_dialog(
             timestamp=ts,
             asset=tf_base_asset.value.strip(),
             amount=base_amount,
-            currency=dd_quote_currency.value,
-            price=None,
-            venue=tf_venue.value.strip(),
-            quote_amount=quote_amount,
+            currency=tf_currency.value.strip(),
+            price=price,
+            quote_amount=None,   # facade derives amount*price for BUY/SELL
             fee_amount=fee_amount,
             fee_currency=fee_currency,
             note=tf_note.value.strip() or None,
+            venue=tf_venue.value.strip(),
         )
 
         result = add_trade(request, db_path)
@@ -228,7 +231,7 @@ def open_add_trade_dialog(
         [
             ft.Row([dd_type, tf_timestamp], spacing=12),
             ft.Row([tf_base_asset, tf_base_amount], spacing=12),
-            ft.Row([dd_quote_currency, tf_quote_amount], spacing=12),
+            ft.Row([tf_currency, tf_price], spacing=12),
             tf_venue,
             ft.Row([tf_fee_amount, tf_fee_currency], spacing=12),
             tf_note,
