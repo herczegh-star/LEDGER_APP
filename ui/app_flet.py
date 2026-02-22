@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
-"""LedgerApp – Flet desktop dashboard (read-only).
+"""LedgerApp – Flet desktop UI.
 
-Run:
-    python ui/app_flet.py
+Entrypoint: call run_ui() from main.py.
 """
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from decimal import Decimal
 from typing import Optional
@@ -14,6 +9,7 @@ from typing import Optional
 import flet as ft
 
 from core.config import load_config
+from core.prices import get_price_provider
 from core.service import LedgerService
 from core.services.portfolio_snapshot_service import get_portfolio_snapshot
 from ui.adapters import load_positions_view
@@ -41,9 +37,20 @@ def _czk(v: Optional[Decimal], sign: bool = False) -> str:
 
 
 def _pct(v: Optional[Decimal]) -> str:
+    """Format a fraction (0.25 → '+25.00%'). Used for live-price derived ROI."""
     if v is None:
         return "—"
     return f"{'+' if v >= 0 else ''}{float(v) * 100:.2f}%"
+
+
+def _pct_pts(v: Optional[Decimal]) -> str:
+    """Format a value already in percentage points (25.00 → '+25.00%').
+    Used for roi_realized which comes pre-multiplied from the core report.
+    """
+    if v is None:
+        return "—"
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{v}%"
 
 
 def _amt(v: Decimal, asset: str) -> str:
@@ -60,19 +67,19 @@ def _color(v: Optional[Decimal]) -> str:
 # ── Sort logic ─────────────────────────────────────────────────────────────────
 
 SORTS = [
-    ("ROI ↓",    "roi_desc"),
-    ("ROI ↑",    "roi_asc"),
-    ("PnL ↓",    "pnl_desc"),
-    ("PnL ↑",    "pnl_asc"),
-    ("Value ↓",  "val_desc"),
-    ("Value ↑",  "val_asc"),
-    ("A–Z",      "az"),
-    ("Z–A",      "za"),
+    ("ROI Total ↓",  "roi_desc"),
+    ("ROI Total ↑",  "roi_asc"),
+    ("PnL ↓",        "pnl_desc"),
+    ("PnL ↑",        "pnl_asc"),
+    ("Value ↓",      "val_desc"),
+    ("Value ↑",      "val_asc"),
+    ("A–Z",          "az"),
+    ("Z–A",          "za"),
 ]
 
 
 def _sort(items: list, key: str) -> list:
-    _r = lambda p: p.get("roi")        or Decimal("-999999")
+    _r = lambda p: p.get("roi_total") or Decimal("-999999")
     _p = lambda p: p.get("unrealized") or Decimal("0")
     _v = lambda p: p.get("value")      or Decimal("0")
     cfg = {
@@ -88,9 +95,28 @@ def _sort(items: list, key: str) -> list:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-def main(page: ft.Page) -> None:
+def _load_prices_config(cfg: dict) -> tuple:
+    """Extract price provider settings from config dict."""
+    ttl = int(cfg.get("prices_ttl_seconds", 60))
+    fiat = cfg.get("prices_fiat", "CZK").upper()
+    return ttl, fiat
+
+
+def main_view(page: ft.Page) -> None:
+    try:
+      _main_view_impl(page)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def _main_view_impl(page: ft.Page) -> None:
     cfg     = load_config()
     db_path = cfg["db_path"]
+
+    _price_ttl, _price_fiat = _load_prices_config(cfg)
+    _price_provider = get_price_provider(ttl_seconds=_price_ttl)
 
     page.title       = "LedgerApp"
     page.bgcolor     = BG
@@ -114,6 +140,7 @@ def main(page: ft.Page) -> None:
     snap_net_flow_txt = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_MUT)
     snap_assets_txt   = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
     snap_top_pos_txt  = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
+    snap_roi_txt      = ft.Text("—", size=15, weight=ft.FontWeight.BOLD, color=T_PRI)
 
     # Dynamic regions (populated by render functions)
     pills_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
@@ -173,13 +200,14 @@ def main(page: ft.Page) -> None:
     # ── Position cards ─────────────────────────────────────────────────────────
     def build_cards() -> None:
         def make_card(p: dict) -> ft.Container:
-            unr = p.get("unrealized")
-            roi = p.get("roi")
+            unr       = p.get("unrealized")
+            roi_total = p.get("roi_total")      # live-price: (value-cost)/cost fraction
+            roi_real  = p.get("roi_realized")   # core: realized_pnl/cost_basis in %pts
             bc  = GREEN if (unr is not None and unr >= 0) else \
                   RED   if (unr is not None)              else BORDER
 
             def on_detail(e, a=p["asset"]) -> None:
-                page.open(ft.SnackBar(
+                page.show_dialog(ft.SnackBar(
                     ft.Text(f"Detail: {a} (TODO)"), duration=2000
                 ))
 
@@ -191,7 +219,7 @@ def main(page: ft.Page) -> None:
 
             return ft.Container(
                 content=ft.Column([
-                    # Top row: asset name | unrealized + roi% + Detail
+                    # Top row: asset | unrealized PnL + Total ROI + Detail
                     ft.Row([
                         ft.Text(
                             p["asset"], size=18,
@@ -200,8 +228,8 @@ def main(page: ft.Page) -> None:
                         ft.Row([
                             ft.Text(_czk(unr, sign=True), size=14,
                                     weight=ft.FontWeight.W_600, color=_color(unr)),
-                            ft.Text(_pct(roi), size=14,
-                                    weight=ft.FontWeight.W_600, color=_color(roi)),
+                            ft.Text(_pct(roi_total), size=14,
+                                    weight=ft.FontWeight.W_600, color=_color(roi_total)),
                             ft.TextButton(
                                 "Detail", on_click=on_detail,
                                 style=ft.ButtonStyle(
@@ -214,11 +242,12 @@ def main(page: ft.Page) -> None:
                     ft.Divider(height=1, color=BORDER),
                     # Bottom row: stats
                     ft.Row([
-                        stat("Amount",     _amt(p["amount"], p["asset"])),
-                        stat("Avg Buy",    _czk(p["avg_price"])),
-                        stat("Cost Basis", _czk(p["cost"])),
-                        stat("Spot Price", _czk(p.get("spot_price"))),
-                        stat("Value",      _czk(p.get("value"))),
+                        stat("Amount",          _amt(p["amount"], p["asset"])),
+                        stat("Avg Buy",         _czk(p["avg_price"])),
+                        stat("Cost Basis",      _czk(p["cost"])),
+                        stat("Spot Price",      _czk(p.get("spot_price"))),
+                        stat("Value",           _czk(p.get("value"))),
+                        stat("ROI (Realized)",  _pct_pts(roi_real)),
                     ], spacing=40),
                 ], spacing=12),
                 bgcolor=BG_CARD,
@@ -230,7 +259,7 @@ def main(page: ft.Page) -> None:
                     blur_radius=10,
                     color=bc if bc != BORDER else "#00000000",
                     offset=ft.Offset(0, 0),
-                    blur_style=ft.ShadowBlurStyle.OUTER,
+                    blur_style=ft.BlurStyle.OUTER,
                 ) if bc != BORDER else None,
             )
 
@@ -268,11 +297,34 @@ def main(page: ft.Page) -> None:
             snap_top_pos_txt.value = f"{asset}  ·  {cb_str}"
         else:
             snap_top_pos_txt.value = "—"
+        if snap.roi is None:
+            snap_roi_txt.value = "—"
+            snap_roi_txt.color = T_PRI
+        else:
+            snap_roi_txt.value = f"{snap.roi}%"
+            snap_roi_txt.color = GREEN if snap.roi >= Decimal("0") else RED
 
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
         nonlocal raw
         raw = load_positions_view(db_path)
+
+        # Enrich positions with live spot prices (failure-tolerant)
+        assets = [p["asset"] for p in raw]
+        if assets:
+            prices = _price_provider.get_prices(assets, _price_fiat)
+            for p in raw:
+                spot = prices.get(p["asset"])
+                p["spot_price"] = spot
+                if spot is not None:
+                    p["value"] = p["amount"] * spot
+                    cost = p["cost"]
+                    if cost > Decimal("0"):
+                        p["unrealized"] = p["value"] - cost
+                        p["roi_total"] = p["unrealized"] / cost
+                    else:
+                        p["unrealized"] = None
+                        p["roi_total"] = None
 
         svc = LedgerService(db_path)
         try:
@@ -288,7 +340,7 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def on_export(e) -> None:
-        page.open(ft.SnackBar(ft.Text("Export (TODO)"), duration=2000))
+        open_export_dialog(page, db_path)
 
     # ── Layout helpers ─────────────────────────────────────────────────────────
     def kpi_box(label: str, widget: ft.Text) -> ft.Container:
@@ -321,6 +373,7 @@ def main(page: ft.Page) -> None:
             _snap_card("Net Flow",      snap_net_flow_txt),
             _snap_card("Assets Held",   snap_assets_txt),
             _snap_card("Top Position",  snap_top_pos_txt),
+            _snap_card("Realized ROI",  snap_roi_txt),
         ], spacing=12),
         padding=ft.padding.symmetric(10, 24),
         border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
@@ -361,9 +414,18 @@ def main(page: ft.Page) -> None:
     from ui.modules.positions_view import build_positions_view as _build_pv
     _positions_wac_view, _run_positions = _build_pv(page, db_path)
 
+    from ui.modules.health_view import build_health_view as _build_hv
+    _health_view, _run_health = _build_hv(page, db_path)
+
     from ui.modules.add_trade_dialog import open_add_trade_dialog
+    from ui.modules.export_dialog import open_export_dialog
     from ui.modules.import_dialog import open_import_dialog
     from ui.modules.reversal_dialog import open_reversal_dialog
+
+    # Ledger view is built AFTER _refresh_all (needs it as a callback).
+    # Closures read from the enclosing scope cell, so they see the final value.
+    _ledger_view = None
+    _run_ledger  = None
 
     _content = ft.Column([_positions_view], spacing=0, expand=True)
 
@@ -375,9 +437,15 @@ def main(page: ft.Page) -> None:
         elif idx == 1:
             _content.controls = [_reports_view]
             _run_report()
-        else:  # idx == 2
+        elif idx == 2:
             _content.controls = [_positions_wac_view]
             _run_positions()
+        elif idx == 3:
+            _content.controls = [_health_view]
+            _run_health()
+        else:  # idx == 4
+            _content.controls = [_ledger_view]
+            _run_ledger()
         page.update()
 
     _nav = ft.NavigationRail(
@@ -387,9 +455,11 @@ def main(page: ft.Page) -> None:
         bgcolor=BG_HDR,
         indicator_color=BLUE,
         destinations=[
-            ft.NavigationRailDestination(icon="dashboard_outlined",  label="Dashboard"),
-            ft.NavigationRailDestination(icon="bar_chart_outlined",  label="Reports"),
-            ft.NavigationRailDestination(icon="table_chart_outlined", label="Positions"),
+            ft.NavigationRailDestination(icon="dashboard_outlined",        label="Dashboard"),
+            ft.NavigationRailDestination(icon="bar_chart_outlined",        label="Reports"),
+            ft.NavigationRailDestination(icon="table_chart_outlined",      label="Positions"),
+            ft.NavigationRailDestination(icon="health_and_safety_outlined", label="Health"),
+            ft.NavigationRailDestination(icon="table_rows_outlined",        label="Ledger"),
         ],
     )
 
@@ -400,6 +470,14 @@ def main(page: ft.Page) -> None:
             _run_report()
         elif active is _positions_wac_view:
             _run_positions()
+        elif active is _health_view:
+            _run_health()
+        elif active is _ledger_view:
+            _run_ledger()
+
+    # Build ledger view now that _refresh_all exists
+    from ui.modules.ledger_view import build_ledger_view as _build_lv
+    _ledger_view, _run_ledger = _build_lv(page, db_path, on_after_reverse=_refresh_all)
 
     def on_add_trade(e) -> None:
         open_add_trade_dialog(page, db_path, _refresh_all)
@@ -442,5 +520,5 @@ def main(page: ft.Page) -> None:
     refresh()
 
 
-if __name__ == "__main__":
-    ft.run(main)
+def run_ui() -> None:
+    ft.run(main_view)

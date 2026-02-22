@@ -13,6 +13,5 @@ if "--cli" in sys.argv:
     from ui.terminal import main
     main()
 else:
-    import flet as ft
-    from ui.app_flet import main
-    ft.run(main)
+    from ui.app_flet import run_ui
+    run_ui()
