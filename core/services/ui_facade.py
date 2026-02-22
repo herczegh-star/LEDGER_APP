@@ -4,15 +4,27 @@ UI modules import *only* from this module (and core.constants).
 No UI module should import core internals directly.
 
 Public API:
+    create_app_context(config_path) -> AppContextDTO
     get_dashboard_snapshot(db_path, price_provider, fiat) -> DashboardSnapshotDTO
     add_trade(request, db_path) -> AddTradeResultDTO
+    get_ledger_rows(db_path) -> list
+    get_health_report(db_path) -> TableReport
+    get_positions_table_report(db_path) -> TableReport
+    get_time_series_report(db_path, kind, bucket, fiat) -> TimeSeriesReport
+    export_table_report_to_csv(report, out_path) -> str
+    export_ledger_to_csv(db_path, out_path) -> str
+    export_cashflow_to_csv(db_path, out_path, bucket, fiat) -> str
+    export_netto_invested_to_csv(db_path, out_path, bucket, fiat) -> str
+    export_positions_to_csv(db_path, out_path) -> str
+    import_file(db_path, file_path, sheet_name) -> list
+    reverse_trade(db_path, trade_id) -> list
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.constants import TRADE_TYPES
 from core.reports.positions import compute_positions
@@ -235,3 +247,152 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
         success=True,
         n_rows_added=result.inserted,
     )
+
+
+# ── AppContext ─────────────────────────────────────────────────────────────────
+
+@dataclass
+class AppContextDTO:
+    """Runtime context created once at startup and passed to facade functions."""
+
+    db_path: str
+    fiat: str
+    price_provider: Any   # CachedPriceProvider or None
+
+
+def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
+    """Load config + price provider and return an AppContextDTO.
+
+    This is the only place in the UI boundary that touches core.config and
+    core.prices.  The returned DTO is passed around; UI modules never import
+    those core internals directly.
+
+    Args:
+        config_path: Path to ledger.ini (default: "ledger.ini").
+
+    Returns:
+        AppContextDTO with db_path, fiat, and price_provider populated.
+    """
+    from core.config import load_config
+    from core.prices import get_price_provider as _get_pp
+
+    cfg = load_config(config_path) if config_path else load_config()
+    ttl = int(cfg.get("prices_ttl_seconds", 60))
+    fiat = cfg.get("prices_fiat", "CZK").upper()
+    return AppContextDTO(
+        db_path=cfg["db_path"],
+        fiat=fiat,
+        price_provider=_get_pp(ttl_seconds=ttl),
+    )
+
+
+# ── Low-level data access ──────────────────────────────────────────────────────
+
+def get_ledger_rows(db_path: str) -> list:
+    """Return all ledger rows ordered by timestamp (RawRow list)."""
+    svc = LedgerService(db_path)
+    try:
+        return svc.timeline()
+    finally:
+        svc.close()
+
+
+# ── Health report ──────────────────────────────────────────────────────────────
+
+def get_health_report(db_path: str):
+    """Run integrity checks and return a TableReport."""
+    from core.services.health_service import health_report as _health_report
+    rows = get_ledger_rows(db_path)
+    return _health_report(rows)
+
+
+# ── Positions table report ─────────────────────────────────────────────────────
+
+def get_positions_table_report(db_path: str):
+    """Return WAC positions as a TableReport DTO."""
+    from core.services.report_service import get_positions_report as _gpr
+    rows = get_ledger_rows(db_path)
+    return _gpr(rows)
+
+
+# ── Time-series reports ────────────────────────────────────────────────────────
+
+def get_time_series_report(
+    db_path: str,
+    kind: str,
+    bucket: str = "month",
+    fiat: Optional[set] = None,
+):
+    """Return a time-series report (cashflow or netto_invested).
+
+    Args:
+        db_path: Path to the SQLite ledger.
+        kind:    Report kind string: "cashflow" or "netto_invested".
+        bucket:  Time bucket: "day", "week", or "month".
+        fiat:    Fiat currency set (default: {"EUR", "CZK"}).
+    """
+    from core.services.report_service import ReportKind, get_report as _get_report
+    rows = get_ledger_rows(db_path)
+    return _get_report(rows, ReportKind(kind), bucket=bucket, fiat=fiat)
+
+
+# ── Export ─────────────────────────────────────────────────────────────────────
+
+def export_table_report_to_csv(report, out_path: str) -> str:
+    """Serialize a TableReport to CSV and return the saved absolute path."""
+    from core.services.export_service import export_table_report_csv as _etrc
+    return _etrc(report, out_path)
+
+
+def export_ledger_to_csv(db_path: str, out_path: str) -> str:
+    """Export all ledger rows to CSV and return the saved path."""
+    from core.services.export_service import export_ledger_csv as _elc
+    return _elc(db_path, out_path)
+
+
+def export_cashflow_to_csv(
+    db_path: str,
+    out_path: str,
+    bucket: str = "month",
+    fiat: Optional[set] = None,
+) -> str:
+    """Export cashflow report to CSV and return the saved path."""
+    from core.services.export_service import export_cashflow_csv as _ecc
+    return _ecc(db_path, out_path, bucket=bucket, fiat=fiat)
+
+
+def export_netto_invested_to_csv(
+    db_path: str,
+    out_path: str,
+    bucket: str = "month",
+    fiat: Optional[set] = None,
+) -> str:
+    """Export netto-invested report to CSV and return the saved path."""
+    from core.services.export_service import export_netto_invested_csv as _enic
+    return _enic(db_path, out_path, bucket=bucket, fiat=fiat)
+
+
+def export_positions_to_csv(db_path: str, out_path: str) -> str:
+    """Export WAC positions to CSV and return the saved path."""
+    from core.services.export_service import export_positions_csv as _epc
+    return _epc(db_path, out_path)
+
+
+# ── Import ─────────────────────────────────────────────────────────────────────
+
+def import_file(
+    db_path: str,
+    file_path: str,
+    sheet_name: Optional[str] = None,
+) -> list:
+    """Import a unified_format_raw file and return inserted RawRow list."""
+    from core.services.unified_import_service import import_unified_file as _iuf
+    return _iuf(db_path, file_path, sheet_name=sheet_name)
+
+
+# ── Reversal ───────────────────────────────────────────────────────────────────
+
+def reverse_trade(db_path: str, trade_id: str) -> list:
+    """Append REVERSAL rows for a trade group. Raises ValueError if not found."""
+    from core.services.reversal_service import reverse_trade as _rt
+    return _rt(db_path, trade_id)

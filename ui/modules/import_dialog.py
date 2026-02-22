@@ -12,7 +12,7 @@ from typing import Callable
 
 import flet as ft
 
-from core.services.unified_import_service import import_unified_file
+from core.services.ui_facade import import_file
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
 BG_CARD = "#131922"
@@ -109,7 +109,7 @@ def open_import_dialog(
 
         sheet = tf_sheet.value.strip() or None
         try:
-            rows = import_unified_file(db_path, path, sheet_name=sheet)
+            rows = import_file(db_path, path, sheet_name=sheet)
         except Exception as exc:
             btn_import.disabled = False
             btn_import.text = "Import"
@@ -119,7 +119,7 @@ def open_import_dialog(
             return
 
         _close()
-        page.open(ft.SnackBar(
+        page.show_dialog(ft.SnackBar(
             ft.Text(f"{len(rows)} row(s) imported"),
             duration=3000,
         ))
@@ -174,4 +174,4 @@ def open_import_dialog(
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    page.open(dlg)
+    page.show_dialog(dlg)

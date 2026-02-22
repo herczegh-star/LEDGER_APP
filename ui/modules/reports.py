@@ -8,8 +8,7 @@ from typing import Callable, Tuple
 
 import flet as ft
 
-from core.service import LedgerService
-from core.services.report_service import ReportKind, get_report
+from core.services.ui_facade import get_time_series_report
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────────
 BG      = "#0b0f14"
@@ -24,10 +23,10 @@ BLUE    = "#1d4ed8"
 
 # ── Metric column definitions per report kind ───────────────────────────────────
 _COLS = {
-    ReportKind.CASHFLOW: [
+    "cashflow": [
         ("net_amount", "Net Amount"),
     ],
-    ReportKind.NETTO_INVESTED: [
+    "netto_invested": [
         ("invested_amount", "Invested"),
         ("inflow_amount",   "Inflow"),
         ("net_flow",        "Net Flow"),
@@ -54,7 +53,7 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
     """
     # ── State ──────────────────────────────────────────────────────────────────
     state = {
-        "kind":     ReportKind.CASHFLOW,
+        "kind":     "cashflow",
         "bucket":   "month",
         "fiat_eur": True,
         "fiat_czk": True,
@@ -67,12 +66,6 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
 
     # ── Run report ──────────────────────────────────────────────────────────────
     def run_report(e=None) -> None:
-        svc = LedgerService(db_path)
-        try:
-            rows = svc.timeline()
-        finally:
-            svc.close()
-
         fiat: set = set()
         if state["fiat_eur"]:
             fiat.add("EUR")
@@ -81,7 +74,7 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
         if not fiat:
             fiat = {"EUR", "CZK"}
 
-        report = get_report(rows, state["kind"], bucket=state["bucket"], fiat=fiat)
+        report = get_time_series_report(db_path, state["kind"], bucket=state["bucket"], fiat=fiat)
 
         # ── Totals ──
         totals_row.controls.clear()
@@ -150,7 +143,7 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
 
     # ── Control callbacks ───────────────────────────────────────────────────────
     def on_kind_change(e) -> None:
-        state["kind"] = ReportKind(e.control.value)
+        state["kind"] = e.control.value
         run_report()
 
     def on_bucket_change(e) -> None:
@@ -176,8 +169,8 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
             ft.dropdown.Option("netto_invested", "Netto Invested"),
         ],
         value="cashflow",
-        on_change=on_kind_change,
     )
+    dd_kind.on_change = on_kind_change
 
     dd_bucket = ft.Dropdown(
         width=110,
@@ -190,11 +183,13 @@ def build_reports_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable
             ft.dropdown.Option("day",   "Day"),
         ],
         value="month",
-        on_change=on_bucket_change,
     )
+    dd_bucket.on_change = on_bucket_change
 
-    cb_eur = ft.Checkbox(label="EUR", value=True, on_change=on_fiat_eur)
-    cb_czk = ft.Checkbox(label="CZK", value=True, on_change=on_fiat_czk)
+    cb_eur = ft.Checkbox(label="EUR", value=True)
+    cb_eur.on_change = on_fiat_eur
+    cb_czk = ft.Checkbox(label="CZK", value=True)
+    cb_czk.on_change = on_fiat_czk
 
     # ── Layout ─────────────────────────────────────────────────────────────────
     view = ft.Column(

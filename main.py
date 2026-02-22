@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 if "--cli" in sys.argv:
-    from ui.terminal import main
+    from cli.terminal import main
     main()
 else:
     from ui.app_flet import run_ui

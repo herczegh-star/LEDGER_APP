@@ -8,9 +8,7 @@ from typing import Optional
 
 import flet as ft
 
-from core.config import load_config
-from core.prices import get_price_provider
-from core.services.ui_facade import get_dashboard_snapshot
+from core.services.ui_facade import create_app_context, get_dashboard_snapshot
 
 # ── Color palette ──────────────────────────────────────────────────────────────
 BG       = "#0b0f14"
@@ -93,13 +91,6 @@ def _sort(items: list, key: str) -> list:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-def _load_prices_config(cfg: dict) -> tuple:
-    """Extract price provider settings from config dict."""
-    ttl = int(cfg.get("prices_ttl_seconds", 60))
-    fiat = cfg.get("prices_fiat", "CZK").upper()
-    return ttl, fiat
-
-
 def main_view(page: ft.Page) -> None:
     try:
       _main_view_impl(page)
@@ -110,11 +101,10 @@ def main_view(page: ft.Page) -> None:
 
 
 def _main_view_impl(page: ft.Page) -> None:
-    cfg     = load_config()
-    db_path = cfg["db_path"]
-
-    _price_ttl, _price_fiat = _load_prices_config(cfg)
-    _price_provider = get_price_provider(ttl_seconds=_price_ttl)
+    ctx = create_app_context()
+    db_path        = ctx.db_path
+    _price_provider = ctx.price_provider
+    _price_fiat    = ctx.fiat
 
     page.title       = "LedgerApp"
     page.bgcolor     = BG

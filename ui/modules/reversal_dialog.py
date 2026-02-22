@@ -11,7 +11,7 @@ from typing import Callable
 
 import flet as ft
 
-from core.services.reversal_service import reverse_trade
+from core.services.ui_facade import reverse_trade
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
 BG_CARD = "#131922"
@@ -66,7 +66,7 @@ def open_reversal_dialog(
             return
 
         _close()
-        page.open(ft.SnackBar(
+        page.show_dialog(ft.SnackBar(
             ft.Text(f"{len(rows)} reversal row(s) appended to ledger"),
             duration=3000,
         ))
@@ -111,4 +111,4 @@ def open_reversal_dialog(
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    page.open(dlg)
+    page.show_dialog(dlg)
