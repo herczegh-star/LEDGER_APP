@@ -102,16 +102,33 @@ def main_view(page: ft.Page) -> None:
 
 def _main_view_impl(page: ft.Page) -> None:
     ctx = create_app_context()
-    db_path        = ctx.db_path
-    _price_provider = ctx.price_provider
-    _price_fiat    = ctx.fiat
 
-    page.title       = "LedgerApp"
-    page.bgcolor     = BG
-    page.theme_mode  = ft.ThemeMode.DARK
-    page.padding     = 0
+    page.title      = f"LedgerApp {ctx.version}"
+    page.bgcolor    = BG
+    page.theme_mode = ft.ThemeMode.DARK
+    page.padding    = 0
     page.window.width  = 1200
     page.window.height = 760
+
+    # ── Startup error guard ────────────────────────────────────────────────────
+    if ctx.error:
+        page.add(
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Startup Error", size=20,
+                            weight=ft.FontWeight.BOLD, color=RED),
+                    ft.Text(ctx.error, size=14, color=T_PRI),
+                    ft.Text("Check ledger.ini and restart.",
+                            size=12, color=T_MUT),
+                ], spacing=12),
+                padding=40,
+            )
+        )
+        return
+
+    db_path         = ctx.db_path
+    _price_provider = ctx.price_provider
+    _price_fiat     = ctx.fiat
 
     # ── State ──────────────────────────────────────────────────────────────────
     raw: list = []
@@ -383,7 +400,7 @@ def _main_view_impl(page: ft.Page) -> None:
     page.add(
         ft.Container(
             content=ft.Row([
-                ft.Text("LedgerApp", size=20,
+                ft.Text(f"LedgerApp {ctx.version}", size=20,
                         weight=ft.FontWeight.BOLD, color=T_PRI),
                 ft.Row([
                     ft.TextButton("Add Trade", on_click=on_add_trade,

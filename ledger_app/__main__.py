@@ -15,6 +15,16 @@ def main() -> None:
         print("  --cli       Launch terminal CLI mode")
         return
 
+    # Configure logging before anything else so all modules get handlers.
+    from core.logging_setup import configure_logging
+    configure_logging()
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    from ledger_app import __version__
+    logger.info("Starting Ledger App v%s", __version__)
+
     if "--cli" in sys.argv:
         from cli.terminal import main as _cli_main
         _cli_main()

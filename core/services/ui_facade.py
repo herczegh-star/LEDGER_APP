@@ -21,11 +21,14 @@ Public API:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from core.constants import TRADE_TYPES
 from core.ledger_store import LedgerStore
@@ -360,7 +363,9 @@ class AppContextDTO:
 
     db_path: str
     fiat: str
-    price_provider: Any   # CachedPriceProvider or None
+    price_provider: Any            # CachedPriceProvider or None
+    version: str = "1.0.0"
+    error: Optional[str] = None    # non-None means startup failed; UI shows error page
 
 
 def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
@@ -370,22 +375,63 @@ def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
     core.prices.  The returned DTO is passed around; UI modules never import
     those core internals directly.
 
+    Validation:
+        - db_path must be non-empty (config error → AppContextDTO.error set)
+        - DB file opened/verified at startup; OperationalError logged + surfaced
+        - Price provider failure is non-fatal: continues with price_provider=None
+
     Args:
         config_path: Path to ledger.ini (default: "ledger.ini").
 
     Returns:
-        AppContextDTO with db_path, fiat, and price_provider populated.
+        AppContextDTO (check .error before use).
     """
     from core.config import load_config
-    from core.prices import get_price_provider as _get_pp
+
+    try:
+        from ledger_app import __version__ as _version
+    except Exception:
+        _version = "1.0.0"
 
     cfg = load_config(config_path) if config_path else load_config()
-    ttl = int(cfg.get("prices_ttl_seconds", 60))
+    db_path = cfg.get("db_path", "").strip()
     fiat = cfg.get("prices_fiat", "CZK").upper()
+
+    # ── Validate db_path ──────────────────────────────────────────────────────
+    if not db_path:
+        msg = (
+            "db_path is not configured. "
+            "Set [ledger] db_path in ledger.ini."
+        )
+        logger.error(msg)
+        return AppContextDTO(db_path="", fiat=fiat, price_provider=None,
+                             version=_version, error=msg)
+
+    # ── Probe DB (creates on first run; catches locked/bad-path errors) ───────
+    try:
+        store = LedgerStore(db_path)
+        store.close()
+        logger.info("Database OK: %s", db_path)
+    except Exception as exc:
+        msg = f"Cannot open database '{db_path}': {exc}"
+        logger.error(msg, exc_info=True)
+        return AppContextDTO(db_path=db_path, fiat=fiat, price_provider=None,
+                             version=_version, error=msg)
+
+    # ── Price provider (failure is non-fatal) ─────────────────────────────────
+    price_provider = None
+    try:
+        from core.prices import get_price_provider as _get_pp
+        ttl = int(cfg.get("prices_ttl_seconds", 60))
+        price_provider = _get_pp(ttl_seconds=ttl)
+    except Exception as exc:
+        logger.warning("Price provider unavailable (offline?): %s", exc)
+
     return AppContextDTO(
-        db_path=cfg["db_path"],
+        db_path=db_path,
         fiat=fiat,
-        price_provider=_get_pp(ttl_seconds=ttl),
+        price_provider=price_provider,
+        version=_version,
     )
 
 
