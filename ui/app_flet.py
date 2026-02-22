@@ -10,9 +10,7 @@ import flet as ft
 
 from core.config import load_config
 from core.prices import get_price_provider
-from core.service import LedgerService
-from core.services.portfolio_snapshot_service import get_portfolio_snapshot
-from ui.adapters import load_positions_view
+from core.services.ui_facade import get_dashboard_snapshot
 
 # ── Color palette ──────────────────────────────────────────────────────────────
 BG       = "#0b0f14"
@@ -79,17 +77,17 @@ SORTS = [
 
 
 def _sort(items: list, key: str) -> list:
-    _r = lambda p: p.get("roi_total") or Decimal("-999999")
-    _p = lambda p: p.get("unrealized") or Decimal("0")
-    _v = lambda p: p.get("value")      or Decimal("0")
+    _r = lambda p: p.roi_total or Decimal("-999999")
+    _p = lambda p: p.unrealized_pnl or Decimal("0")
+    _v = lambda p: p.value or Decimal("0")
     cfg = {
         "roi_desc": (_r, True),   "roi_asc":  (_r, False),
         "pnl_desc": (_p, True),   "pnl_asc":  (_p, False),
         "val_desc": (_v, True),   "val_asc":  (_v, False),
-        "az":       (lambda p: p["asset"], False),
-        "za":       (lambda p: p["asset"], True),
+        "az":       (lambda p: p.asset, False),
+        "za":       (lambda p: p.asset, True),
     }
-    fn, rev = cfg.get(key, (lambda p: p["asset"], False))
+    fn, rev = cfg.get(key, (lambda p: p.asset, False))
     return sorted(items, key=fn, reverse=rev)
 
 
@@ -148,10 +146,10 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── KPI update ─────────────────────────────────────────────────────────────
     def update_kpis() -> None:
-        total_cost = sum(p["cost"] for p in raw)
+        total_cost = sum(p.cost_basis for p in raw)
         w_cost.value = _czk(total_cost)
 
-        vals = [p["value"] for p in raw if p.get("value") is not None]
+        vals = [p.value for p in raw if p.value is not None]
         if vals:
             tv  = sum(vals)
             pnl = tv - total_cost
@@ -199,14 +197,14 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Position cards ─────────────────────────────────────────────────────────
     def build_cards() -> None:
-        def make_card(p: dict) -> ft.Container:
-            unr       = p.get("unrealized")
-            roi_total = p.get("roi_total")      # live-price: (value-cost)/cost fraction
-            roi_real  = p.get("roi_realized")   # core: realized_pnl/cost_basis in %pts
+        def make_card(p) -> ft.Container:
+            unr       = p.unrealized_pnl
+            roi_total = p.roi_total      # live-price: (value-cost)/cost fraction
+            roi_real  = p.roi_realized   # core: realized_pnl/cost_basis in %pts
             bc  = GREEN if (unr is not None and unr >= 0) else \
                   RED   if (unr is not None)              else BORDER
 
-            def on_detail(e, a=p["asset"]) -> None:
+            def on_detail(e, a=p.asset) -> None:
                 page.show_dialog(ft.SnackBar(
                     ft.Text(f"Detail: {a} (TODO)"), duration=2000
                 ))
@@ -222,7 +220,7 @@ def _main_view_impl(page: ft.Page) -> None:
                     # Top row: asset | unrealized PnL + Total ROI + Detail
                     ft.Row([
                         ft.Text(
-                            p["asset"], size=18,
+                            p.asset, size=18,
                             weight=ft.FontWeight.BOLD, color=T_PRI,
                         ),
                         ft.Row([
@@ -242,11 +240,11 @@ def _main_view_impl(page: ft.Page) -> None:
                     ft.Divider(height=1, color=BORDER),
                     # Bottom row: stats
                     ft.Row([
-                        stat("Amount",          _amt(p["amount"], p["asset"])),
-                        stat("Avg Buy",         _czk(p["avg_price"])),
-                        stat("Cost Basis",      _czk(p["cost"])),
-                        stat("Spot Price",      _czk(p.get("spot_price"))),
-                        stat("Value",           _czk(p.get("value"))),
+                        stat("Amount",          _amt(p.quantity, p.asset)),
+                        stat("Avg Buy",         _czk(p.wac)),
+                        stat("Cost Basis",      _czk(p.cost_basis)),
+                        stat("Spot Price",      _czk(p.spot_price)),
+                        stat("Value",           _czk(p.value)),
                         stat("ROI (Realized)",  _pct_pts(roi_real)),
                     ], spacing=40),
                 ], spacing=12),
@@ -297,41 +295,18 @@ def _main_view_impl(page: ft.Page) -> None:
             snap_top_pos_txt.value = f"{asset}  ·  {cb_str}"
         else:
             snap_top_pos_txt.value = "—"
-        if snap.roi is None:
+        if snap.realized_roi is None:
             snap_roi_txt.value = "—"
             snap_roi_txt.color = T_PRI
         else:
-            snap_roi_txt.value = f"{snap.roi}%"
-            snap_roi_txt.color = GREEN if snap.roi >= Decimal("0") else RED
+            snap_roi_txt.value = f"{snap.realized_roi}%"
+            snap_roi_txt.color = GREEN if snap.realized_roi >= Decimal("0") else RED
 
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
         nonlocal raw
-        raw = load_positions_view(db_path)
-
-        # Enrich positions with live spot prices (failure-tolerant)
-        assets = [p["asset"] for p in raw]
-        if assets:
-            prices = _price_provider.get_prices(assets, _price_fiat)
-            for p in raw:
-                spot = prices.get(p["asset"])
-                p["spot_price"] = spot
-                if spot is not None:
-                    p["value"] = p["amount"] * spot
-                    cost = p["cost"]
-                    if cost > Decimal("0"):
-                        p["unrealized"] = p["value"] - cost
-                        p["roi_total"] = p["unrealized"] / cost
-                    else:
-                        p["unrealized"] = None
-                        p["roi_total"] = None
-
-        svc = LedgerService(db_path)
-        try:
-            rows = svc.timeline()
-        finally:
-            svc.close()
-        snap = get_portfolio_snapshot(rows)
+        snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+        raw = snap.positions
 
         update_kpis()
         update_snapshot(snap)

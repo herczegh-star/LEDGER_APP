@@ -13,7 +13,8 @@ from typing import Callable
 
 import flet as ft
 
-from core.services.trade_service import AddTradeInput, add_trade
+from core.constants import TRADE_TYPES
+from core.services.ui_facade import AddTradeRequestDTO, add_trade
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
 BG_CARD = "#131922"
@@ -36,17 +37,15 @@ def open_add_trade_dialog(
     now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     # ── Form fields ─────────────────────────────────────────────────────────
+    _DIALOG_TYPES = [t for t in TRADE_TYPES if t in ("BUY", "SELL")]
     dd_type = ft.Dropdown(
         label="Type",
         width=120,
         bgcolor=BG_CARD,
         border_color=BORDER,
         text_style=ft.TextStyle(color=T_PRI, size=13),
-        options=[
-            ft.dropdown.Option("BUY",  "BUY"),
-            ft.dropdown.Option("SELL", "SELL"),
-        ],
-        value="BUY",
+        options=[ft.dropdown.Option(t, t) for t in _DIALOG_TYPES],
+        value=_DIALOG_TYPES[0],
     )
 
     tf_timestamp = ft.TextField(
@@ -190,31 +189,38 @@ def open_add_trade_dialog(
 
         fee_currency: "str | None" = tf_fee_currency.value.strip() or None
 
-        inp = AddTradeInput(
+        request = AddTradeRequestDTO(
             type=dd_type.value,
             timestamp=ts,
-            base_asset=tf_base_asset.value.strip(),
-            base_amount=base_amount,
-            quote_currency=dd_quote_currency.value,
-            quote_amount=quote_amount,
+            asset=tf_base_asset.value.strip(),
+            amount=base_amount,
+            currency=dd_quote_currency.value,
+            price=None,
             venue=tf_venue.value.strip(),
+            quote_amount=quote_amount,
             fee_amount=fee_amount,
             fee_currency=fee_currency,
             note=tf_note.value.strip() or None,
         )
 
-        try:
-            rows = add_trade(db_path, inp)
-        except ValueError as exc:
-            error_text.value = str(exc)
+        result = add_trade(request, db_path)
+
+        if not result.success:
+            error_text.value = result.error_message or "Unknown error"
             page.update()
             return
 
         _close()
-        page.open(ft.SnackBar(
-            ft.Text(f"{len(rows)} row(s) added to ledger"),
-            duration=3000,
-        ))
+        if result.n_rows_added > 0:
+            page.show_dialog(ft.SnackBar(
+                ft.Text(f"Trade saved — {result.n_rows_added} row(s) inserted", color=GREEN),
+                duration=3000,
+            ))
+        else:
+            page.show_dialog(ft.SnackBar(
+                ft.Text("All rows were duplicates — nothing new added", color="#f97316"),
+                duration=4000,
+            ))
         on_success()
 
     # ── Layout ──────────────────────────────────────────────────────────────
@@ -252,4 +258,4 @@ def open_add_trade_dialog(
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    page.open(dlg)
+    page.show_dialog(dlg)
