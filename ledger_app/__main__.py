@@ -25,6 +25,9 @@ def main() -> None:
     from ledger_app import __version__
     logger.info("Starting Ledger App v%s", __version__)
 
+    from core.config import get_resolved_config_path
+    logger.info("Using config: %s", get_resolved_config_path())
+
     if "--cli" in sys.argv:
         from cli.terminal import main as _cli_main
         _cli_main()

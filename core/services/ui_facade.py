@@ -402,19 +402,22 @@ def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
         - Price provider failure is non-fatal: continues with price_provider=None
 
     Args:
-        config_path: Path to ledger.ini (default: "ledger.ini").
+        config_path: Explicit path to ledger.ini.  When None, uses
+                     ~/.ledger_app/ledger.ini (with project-root fallback).
 
     Returns:
         AppContextDTO (check .error before use).
     """
-    from core.config import load_config
+    from core.config import get_resolved_config_path, load_config
 
     try:
         from ledger_app import __version__ as _version
     except Exception:
         _version = "1.0.0"
 
-    cfg = load_config(config_path) if config_path else load_config()
+    resolved_cfg = get_resolved_config_path(config_path)
+    logger.info("Using config: %s", resolved_cfg)
+    cfg = load_config(resolved_cfg)
     db_path = cfg.get("db_path", "").strip()
     fiat = cfg.get("prices_fiat", "CZK").upper()
 

@@ -44,4 +44,11 @@ I/O Modul  →  CORE (doménová logika)  →  ui_facade  →  Flet UI
 
 ## Konfigurace
 
-Nastavení DB a cen je v `ledger.ini` (vytvoří se automaticky při prvním spuštění).
+Konfigurační soubor je uložen ve složce uživatele — nezávisí na pracovním adresáři:
+
+- **Windows:** `%USERPROFILE%\.ledger_app\ledger.ini`
+- **macOS/Linux:** `~/.ledger_app/ledger.ini`
+
+Při prvním spuštění se vytvoří automaticky s výchozím nastavením (SQLite na `~/.ledger_app/ledger.db`).
+
+**Zpětná kompatibilita:** Pokud v kořeni projektu existuje `ledger.ini` a user-home config ještě neexistuje, použije se projektový soubor.
