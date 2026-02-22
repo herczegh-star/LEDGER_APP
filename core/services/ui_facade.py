@@ -21,12 +21,15 @@ Public API:
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from core.constants import TRADE_TYPES
+from core.ledger_store import LedgerStore
+from core.model import RawRow
 from core.reports.positions import compute_positions
 from core.service import LedgerService
 from core.services.portfolio_snapshot_service import get_portfolio_snapshot
@@ -193,14 +196,24 @@ def get_dashboard_snapshot(
 def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
     """Validate, normalize, and append a trade to the ledger.
 
-    Normalization applied before calling the core trade service:
+    Enforces unified_format_raw compatibility rules by type:
+
+        BUY / SELL:  amount != 0, effective price > 0 (quote_amount > 0),
+                     currency required.  Produces double-entry rows.
+        TRANSFER:    amount != 0, price >= 0 (0 is explicitly allowed).
+                     Single row written directly.
+        FEE:         amount != 0, price >= 0.
+                     Single row written directly.
+        REVERSAL:    always rejected here — use reverse_trade() instead.
+
+    Normalization (always applied):
         asset      → .upper().strip()
         currency   → .upper().strip()
         venue      → .lower().strip()
 
-    Never raises — validation and domain errors are captured in
-    AddTradeResultDTO.error_message with success=False.
+    Never raises — all errors captured in AddTradeResultDTO.error_message.
     """
+    # ── 1. Type ───────────────────────────────────────────────────────────────
     if request.type not in TRADE_TYPES:
         return AddTradeResultDTO(
             success=False,
@@ -211,42 +224,118 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             ),
         )
 
-    asset    = request.asset.upper().strip()
-    currency = request.currency.upper().strip()
-    venue    = request.venue.lower().strip()
-
-    quote_amount = request.quote_amount
-    if quote_amount is None and request.price is not None:
-        quote_amount = abs(request.amount * request.price)
-    if quote_amount is None:
-        quote_amount = _ZERO
-
-    inp = AddTradeInput(
-        type=request.type,
-        timestamp=request.timestamp,
-        base_asset=asset,
-        base_amount=abs(request.amount),
-        quote_currency=currency,
-        quote_amount=quote_amount,
-        venue=venue,
-        fee_amount=request.fee_amount,
-        fee_currency=request.fee_currency,
-        note=request.note,
-    )
-
-    try:
-        result = _core_add_trade(db_path, inp)
-    except ValueError as exc:
+    if request.type == "REVERSAL":
         return AddTradeResultDTO(
             success=False,
             n_rows_added=0,
-            error_message=str(exc),
+            error_message=(
+                "REVERSAL cannot be created via add_trade. "
+                "Use reverse_trade(db_path, trade_id) instead."
+            ),
         )
 
-    return AddTradeResultDTO(
-        success=True,
-        n_rows_added=result.inserted,
+    # ── 2. Normalize ──────────────────────────────────────────────────────────
+    asset    = (request.asset    or "").upper().strip()
+    currency = (request.currency or "").upper().strip()
+    venue    = (request.venue    or "").lower().strip()
+
+    # ── 3. Common validation ──────────────────────────────────────────────────
+    if not asset:
+        return AddTradeResultDTO(
+            success=False, n_rows_added=0,
+            error_message="asset must not be empty",
+        )
+    if not venue:
+        return AddTradeResultDTO(
+            success=False, n_rows_added=0,
+            error_message="venue must not be empty",
+        )
+    if request.amount == _ZERO:
+        return AddTradeResultDTO(
+            success=False, n_rows_added=0,
+            error_message="amount must not be zero",
+        )
+
+    # ── 4. BUY / SELL — double-entry via trade_service ────────────────────────
+    if request.type in ("BUY", "SELL"):
+        if not currency:
+            return AddTradeResultDTO(
+                success=False, n_rows_added=0,
+                error_message="currency must not be empty for BUY/SELL",
+            )
+
+        # Derive effective quote_amount (fiat total paid/received).
+        # Falls back to abs(amount * price); both 0 → explicit FAIL.
+        quote_amount = request.quote_amount
+        if quote_amount is None and request.price is not None:
+            quote_amount = abs(request.amount * request.price)
+        if quote_amount is None or quote_amount <= _ZERO:
+            return AddTradeResultDTO(
+                success=False, n_rows_added=0,
+                error_message=(
+                    "price must be > 0 for BUY/SELL trades "
+                    "(provide price > 0 or quote_amount > 0)"
+                ),
+            )
+
+        fee_currency: Optional[str] = None
+        if request.fee_currency:
+            fee_currency = request.fee_currency.upper().strip() or None
+
+        inp = AddTradeInput(
+            type=request.type,
+            timestamp=request.timestamp,
+            base_asset=asset,
+            base_amount=abs(request.amount),
+            quote_currency=currency,
+            quote_amount=quote_amount,
+            venue=venue,
+            fee_amount=request.fee_amount,
+            fee_currency=fee_currency,
+            note=request.note,
+        )
+
+        try:
+            result = _core_add_trade(db_path, inp)
+        except ValueError as exc:
+            return AddTradeResultDTO(
+                success=False, n_rows_added=0,
+                error_message=str(exc),
+            )
+
+        return AddTradeResultDTO(success=True, n_rows_added=result.inserted)
+
+    # ── 5. TRANSFER / FEE — single raw row ────────────────────────────────────
+    # price >= 0; 0 is explicitly allowed for TRANSFER (no market price).
+    price: Decimal = request.price if request.price is not None else _ZERO
+    if price < _ZERO:
+        return AddTradeResultDTO(
+            success=False, n_rows_added=0,
+            error_message="price must be >= 0 for TRANSFER/FEE",
+        )
+
+    # currency defaults to asset when not provided (common for FEE/TRANSFER).
+    eff_currency = currency or asset
+
+    row = RawRow(
+        id=str(uuid.uuid4()),
+        timestamp=request.timestamp,
+        type=request.type,
+        asset=asset,
+        amount=request.amount,       # signed as-is (caller controls direction)
+        currency=eff_currency,
+        price=price,
+        venue=venue,
+        note=request.note,
     )
+
+    store = LedgerStore(db_path)
+    try:
+        counts = store.import_rows([row])
+    finally:
+        store.close()
+
+    return AddTradeResultDTO(success=True, n_rows_added=counts["inserted"])
 
 
 # ── AppContext ─────────────────────────────────────────────────────────────────
