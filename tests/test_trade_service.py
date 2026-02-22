@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from core.services.trade_service import AddTradeInput, build_trade_rows, add_trade
+from core.services.trade_service import AddTradeInput, TradeResult, build_trade_rows, add_trade
 
 
 # ── Shared fixture data ────────────────────────────────────────────────────────
@@ -291,8 +291,11 @@ def test_add_trade_integration_inserts_rows():
             venue="test_exchange",
             note="integration test",
         )
-        returned_rows = add_trade(path, inp)
-        assert len(returned_rows) == 2
+        result = add_trade(path, inp)
+        assert isinstance(result, TradeResult)
+        assert len(result.rows) == 2
+        assert result.inserted == 2
+        assert result.skipped == 0
 
         store = LedgerStore(path)
         try:
@@ -319,14 +322,17 @@ def test_add_trade_integration_with_fee():
             fee_amount=Decimal("10"),
             fee_currency="EUR",
         )
-        returned_rows = add_trade(path, inp)
-        assert len(returned_rows) == 3
+        result = add_trade(path, inp)
+        assert isinstance(result, TradeResult)
+        assert len(result.rows) == 3
+        assert result.inserted == 3
+        assert result.skipped == 0
 
         store = LedgerStore(path)
         try:
             assert store.count() == 3
             # All rows share one trade_id
-            trade_id = returned_rows[0].id
+            trade_id = result.rows[0].id
             pair = store.get_rows_by_id(trade_id)
             assert len(pair) == 3
         finally:

@@ -1,4 +1,10 @@
-"""Positions engine: WAC výpočet per-asset nad unified_format_raw ledgerem."""
+"""Positions engine: WAC výpočet per-asset nad unified_format_raw ledgerem.
+
+DEPRECATED (production): Tento engine je nahrazen core/reports/positions.py,
+který je fiat-native (bez FX konverze) a vrací TableReport DTO.
+Tento soubor zůstává kvůli existujícím testům (tests/test_positions_engine_wac.py).
+Nepoužívat v novém kódu.
+"""
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Callable, Dict, List, Optional

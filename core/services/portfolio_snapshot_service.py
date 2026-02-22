@@ -24,6 +24,9 @@ from core.reports.positions import compute_positions
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 
 
+_ROI_PLACES = Decimal("0.01")
+
+
 @dataclass
 class PortfolioSnapshot:
     """Aggregated portfolio summary derived purely from ledger rows.
@@ -37,12 +40,15 @@ class PortfolioSnapshot:
         top_position: Asset with the highest cost_basis (cost_basis > 0),
                       or None when there are no open/non-zero-cost positions.
                       Dict keys: "asset" (str), "cost_basis" (Decimal).
+        roi:          Total portfolio ROI = (sum realized_pnl / sum cost_basis) * 100,
+                      rounded to 2 decimal places. None when total cost_basis == 0.
     """
 
     invested:     Dict[str, Decimal]
     net_flow:     Dict[str, Decimal]
     assets_held:  int
     top_position: Optional[Dict]
+    roi:          Optional[Decimal] = None
 
 
 def get_portfolio_snapshot(
@@ -95,9 +101,19 @@ def get_portfolio_snapshot(
             "cost_basis": top.cost_basis,
         }
 
+    # Portfolio ROI: total realized P&L relative to total cost basis
+    total_realized_pnl = sum((p.realized_pnl for p in positions), Decimal("0"))
+    total_cost_basis   = sum((p.cost_basis   for p in positions), Decimal("0"))
+    roi: Optional[Decimal] = (
+        (total_realized_pnl / total_cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+        if total_cost_basis != Decimal("0")
+        else None
+    )
+
     return PortfolioSnapshot(
         invested=invested,
         net_flow=net_flow,
         assets_held=assets_held,
         top_position=top_position,
+        roi=roi,
     )

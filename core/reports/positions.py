@@ -26,6 +26,7 @@ from core.dto.reporting import ReportMeta, TableReport, TableRow
 from core.model import RawRow
 
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
+_ROI_PLACES = Decimal("0.01")
 
 # Row types that carry investment position changes
 _INVESTMENT_TYPES = frozenset({"BUY", "SELL", "REVERSAL"})
@@ -67,10 +68,7 @@ def compute_positions(
         List[PositionRow] sorted alphabetically by asset name.
         Includes assets with quantity == 0 (closed positions still carry
         realized_pnl).  Assets with zero total movement are omitted.
-
-    Raises:
-        ValueError: If a SELL/negative-amount row exceeds the current
-                    position quantity for that asset.
+        Over-sells result in a negative quantity (diagnostic indicator).
     """
     fiat = frozenset(a.upper() for a in fiat)
 
@@ -126,12 +124,10 @@ def compute_positions(
 
         else:
             # ── SELL (or negative REVERSAL): decrease position, realise P&L ─
+            # Over-sells (sold_qty > current quantity) are allowed — the position
+            # goes negative, which acts as a diagnostic indicator in the UI.
+            # Per project principle: diagnostics warn, never block.
             sold_qty = abs(row.amount)
-            if sold_qty > state.quantity:
-                raise ValueError(
-                    f"Cannot sell {sold_qty} {asset}: "
-                    f"current position is {state.quantity}"
-                )
 
             proceeds = abs(fiat_amount) if fiat_amount is not None else Decimal("0")
             fee_cost = fee_by_id.get(row.id, Decimal("0"))
@@ -184,18 +180,23 @@ def positions_report(
     fiat = frozenset(a.upper() for a in fiat)
     positions = compute_positions(rows, fiat)
 
-    table_rows = [
-        TableRow(
+    table_rows = []
+    for pos in positions:  # already sorted alphabetically by compute_positions
+        roi = (
+            (pos.realized_pnl / pos.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+            if pos.cost_basis != Decimal("0")
+            else None
+        )
+        table_rows.append(TableRow(
             key=pos.asset,
             values={
                 "quantity":     pos.quantity,
                 "wac":          pos.wac,
                 "cost_basis":   pos.cost_basis,
                 "realized_pnl": pos.realized_pnl,
+                "roi":          roi,
             },
-        )
-        for pos in positions  # already sorted alphabetically by compute_positions
-    ]
+        ))
 
     meta = ReportMeta(bucket="snapshot", fiat=fiat, kind="snapshot")
     return TableReport(meta=meta, rows=table_rows, totals=None)

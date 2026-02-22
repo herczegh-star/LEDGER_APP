@@ -3,7 +3,7 @@
 import sys
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 from datetime import datetime
@@ -17,7 +17,7 @@ from core.fee import create_fee
 from core.transfer import create_transfer
 from io_module.raw_loader import load_raw
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"  # tests/fixtures/
 SAMPLE_CSV = str(FIXTURES_DIR / "sample_raw.csv")
 DB = "test_ledger.db"
 

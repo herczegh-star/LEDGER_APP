@@ -307,3 +307,69 @@ def test_snapshot_top_position_cost_basis_is_decimal():
     rows = make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(1))
     snap = get_portfolio_snapshot(rows)
     assert isinstance(snap.top_position["cost_basis"], Decimal)
+
+
+# ── 9. Portfolio ROI ──────────────────────────────────────────────────────────
+
+def test_roi_is_none_when_empty():
+    snap = get_portfolio_snapshot([])
+    assert snap.roi is None
+
+
+def test_roi_is_none_when_no_cost_basis():
+    # BUY without fiat leg → cost_basis = 0 → roi = None
+    tid = str(uuid.uuid4())
+    rows = [RawRow(id=tid, timestamp=_ts(1), type="BUY", asset="BTC",
+                   amount=Decimal("1"), currency="EUR", price=None, venue="test")]
+    snap = get_portfolio_snapshot(rows)
+    assert snap.roi is None
+
+
+def test_roi_positive():
+    # Buy 2 BTC @ 80000, sell 1 BTC @ 50000 → pnl=10000, cost_remaining=40000
+    # roi = (10000 / 40000) * 100 = 25.00%
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("80000"), ts=_ts(1))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("50000"), ts=_ts(2))
+    )
+    snap = get_portfolio_snapshot(rows)
+    assert snap.roi == Decimal("25.00")
+
+
+def test_roi_negative():
+    # Buy 2 BTC @ 100000, sell 1 BTC @ 40000 → pnl=-10000, cost_remaining=50000
+    # roi = (-10000 / 50000) * 100 = -20.00%
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("100000"), ts=_ts(1))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(2))
+    )
+    snap = get_portfolio_snapshot(rows)
+    assert snap.roi == Decimal("-20.00")
+
+
+def test_roi_rounds_to_two_decimal_places():
+    # Buy 2 BTC @ 60000, sell 1 BTC @ 40000 → pnl=10000, cost_remaining=30000
+    # roi = (10000 / 30000) * 100 = 33.33...% → 33.33
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("60000"), ts=_ts(1))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(2))
+    )
+    snap = get_portfolio_snapshot(rows)
+    assert snap.roi == Decimal("33.33")
+
+
+def test_roi_is_decimal():
+    rows = make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(1))
+    snap = get_portfolio_snapshot(rows)
+    assert isinstance(snap.roi, Decimal)
+
+
+def test_roi_aggregates_across_assets():
+    # BTC: cost=40000, pnl=0; ETH: cost=20000, pnl=0
+    # total cost=60000, total pnl=0 → roi=0.00%
+    rows = (
+        make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(1))
+        + make_buy("ETH", Decimal("1"), "EUR", Decimal("20000"), ts=_ts(2))
+    )
+    snap = get_portfolio_snapshot(rows)
+    assert snap.roi == Decimal("0.00")

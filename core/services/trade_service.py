@@ -5,7 +5,7 @@ UI calls add_trade() only. No computations happen in UI.
 Key difference from LedgerService.add_trade():
   - Input is quote_amount (total fiat exchanged), not unit price.
   - Optional bundled fee row (same trade_id, type=FEE).
-  - Returns List[RawRow] instead of OperationResult.
+  - Returns TradeResult with inserted/skipped dedup counts.
 """
 from __future__ import annotations
 
@@ -19,6 +19,15 @@ from core.ledger_store import LedgerStore
 from core.model import RawRow
 
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
+
+
+@dataclass
+class TradeResult:
+    """Return value of add_trade() — generated rows plus dedup counters."""
+
+    rows: List[RawRow]
+    inserted: int
+    skipped: int
 
 
 @dataclass
@@ -132,16 +141,16 @@ def add_trade(
     db_path: str,
     inp: AddTradeInput,
     fiat: FrozenSet[str] = _FIAT_DEFAULT,
-) -> List[RawRow]:
+) -> TradeResult:
     """Build rows and append to the ledger.
 
     Raises ValueError on invalid input (before touching DB).
-    Returns the generated RawRow list (dedup silently skips duplicates).
+    Returns TradeResult with the generated rows and inserted/skipped counts.
     """
     rows = build_trade_rows(inp, fiat)
     store = LedgerStore(db_path)
     try:
-        store.import_rows(rows)
+        counts = store.import_rows(rows)
     finally:
         store.close()
-    return rows
+    return TradeResult(rows=rows, inserted=counts["inserted"], skipped=counts["skipped"])

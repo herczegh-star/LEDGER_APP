@@ -3,7 +3,7 @@
 import sys
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 from datetime import datetime
@@ -11,7 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from core.service import LedgerService, ImportResult, OperationResult
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"  # tests/fixtures/
 SAMPLE_CSV = str(FIXTURES_DIR / "sample_raw.csv")
 DB = "test_service.db"
 

@@ -88,7 +88,9 @@ class LedgerStore:
         )
 
     def timeline(self) -> List[RawRow]:
-        rows = self.conn.execute("SELECT * FROM ledger ORDER BY timestamp ASC").fetchall()
+        rows = self.conn.execute(
+            "SELECT * FROM ledger ORDER BY timestamp ASC, id ASC, row_fp ASC"
+        ).fetchall()
         return [self._row_to_rawrow(r) for r in rows]
 
     def asset_balances(self) -> dict:
@@ -130,38 +132,46 @@ class LedgerStore:
         return warnings
 
     def insert_pair(self, row_a: RawRow, row_b: RawRow) -> Tuple[bool, bool]:
-        """Vloží dva řádky v jedné transakci (pro double-entry)."""
+        """Vloží dva řádky v jedné atomické SQLite transakci (pro double-entry).
+
+        Buď jsou committed oba řádky, nebo žádný.
+        IntegrityError (duplicitní fingerprint) je zachycen per-řádek —
+        jeden duplikát nevytlačí druhý.
+        Neočekávané výjimky (I/O, programátorské chyby) propagují ven
+        a transakce se automaticky rollbackuje přes context manager.
+        """
         fp_a = row_a.fingerprint()
         fp_b = row_b.fingerprint()
         now = datetime.now().isoformat()
         results = [False, False]
-        try:
-            self.conn.execute(
-                """INSERT INTO ledger
-                   (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (row_a.id or "", row_a.timestamp.isoformat(), row_a.type,
-                 row_a.asset.upper(), str(row_a.amount), row_a.currency.upper(),
-                 str(row_a.price) if row_a.price is not None else None,
-                 row_a.venue.lower(), row_a.note, fp_a, now),
-            )
-            results[0] = True
-        except sqlite3.IntegrityError:
-            pass
-        try:
-            self.conn.execute(
-                """INSERT INTO ledger
-                   (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (row_b.id or "", row_b.timestamp.isoformat(), row_b.type,
-                 row_b.asset.upper(), str(row_b.amount), row_b.currency.upper(),
-                 str(row_b.price) if row_b.price is not None else None,
-                 row_b.venue.lower(), row_b.note, fp_b, now),
-            )
-            results[1] = True
-        except sqlite3.IntegrityError:
-            pass
-        self.conn.commit()
+        with self.conn:
+            try:
+                self.conn.execute(
+                    """INSERT INTO ledger
+                       (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (row_a.id or "", row_a.timestamp.isoformat(), row_a.type,
+                     row_a.asset.upper(), str(row_a.amount), row_a.currency.upper(),
+                     str(row_a.price) if row_a.price is not None else None,
+                     row_a.venue.lower(), row_a.note, fp_a, now),
+                )
+                results[0] = True
+            except sqlite3.IntegrityError:
+                pass
+
+            try:
+                self.conn.execute(
+                    """INSERT INTO ledger
+                       (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (row_b.id or "", row_b.timestamp.isoformat(), row_b.type,
+                     row_b.asset.upper(), str(row_b.amount), row_b.currency.upper(),
+                     str(row_b.price) if row_b.price is not None else None,
+                     row_b.venue.lower(), row_b.note, fp_b, now),
+                )
+                results[1] = True
+            except sqlite3.IntegrityError:
+                pass
         return tuple(results)
 
     def get_row_by_pk(self, pk: int) -> Optional[RawRow]:
@@ -174,7 +184,7 @@ class LedgerStore:
     def get_rows_by_id(self, row_id: str) -> List[RawRow]:
         """Načte všechny řádky se stejným id (double-entry pár)."""
         rows = self.conn.execute(
-            "SELECT * FROM ledger WHERE id = ? ORDER BY timestamp ASC", (row_id,)
+            "SELECT * FROM ledger WHERE id = ? ORDER BY timestamp ASC, id ASC, row_fp ASC", (row_id,)
         ).fetchall()
         return [self._row_to_rawrow(r) for r in rows]
 
@@ -207,7 +217,7 @@ class LedgerStore:
         if time_to:
             query += " AND timestamp <= ?"
             params.append(time_to.isoformat())
-        query += " ORDER BY timestamp ASC"
+        query += " ORDER BY timestamp ASC, id ASC, row_fp ASC"
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_rawrow(r) for r in rows]
 

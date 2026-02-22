@@ -89,7 +89,9 @@ def test_key_uppercase():
 
 # ── 3. Required value keys ────────────────────────────────────────────────────
 
-_REQUIRED_KEYS = {"quantity", "wac", "cost_basis", "realized_pnl"}
+_REQUIRED_KEYS = {"quantity", "wac", "cost_basis", "realized_pnl", "roi"}
+# roi can be None (when cost_basis == 0); all other keys are always Decimal
+_DECIMAL_KEYS = {"quantity", "wac", "cost_basis", "realized_pnl"}
 
 
 def test_required_keys_present():
@@ -99,7 +101,7 @@ def test_required_keys_present():
 
 
 def test_no_extra_unexpected_keys():
-    """values should contain exactly the 4 required keys (no extras)."""
+    """values should contain exactly the 5 required keys (no extras)."""
     rows = make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"))
     report = positions_report(rows)
     assert set(report.rows[0].values.keys()) == _REQUIRED_KEYS
@@ -110,7 +112,7 @@ def test_no_extra_unexpected_keys():
 def test_values_are_decimal():
     rows = make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"))
     report = positions_report(rows)
-    for key in _REQUIRED_KEYS:
+    for key in _DECIMAL_KEYS:
         assert isinstance(report.rows[0].values[key], Decimal), (
             f"Expected Decimal for '{key}', got {type(report.rows[0].values[key])}"
         )
@@ -259,3 +261,66 @@ def test_report_kind_positions_exists():
 
 def test_report_kind_positions_value():
     assert ReportKind.POSITIONS.value == "positions"
+
+
+# ── 13. ROI field ─────────────────────────────────────────────────────────────
+
+def test_roi_positive():
+    # Buy 2 BTC @ 80000 total (wac=40000), sell 1 BTC @ 50000
+    # → pnl=10000, cost_basis_remaining=40000 → roi=25.00%
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("80000"),
+                 ts=datetime(2026, 1, 1, 10, 0, 0))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("50000"),
+                    ts=datetime(2026, 1, 2, 10, 0, 0))
+    )
+    report = positions_report(rows)
+    pos = report.rows[0]
+    assert pos.values["roi"] == Decimal("25.00")
+
+
+def test_roi_negative():
+    # Buy 2 BTC @ 100000 total (wac=50000), sell 1 BTC @ 40000
+    # → pnl=-10000, cost_basis_remaining=50000 → roi=-20.00%
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("100000"),
+                 ts=datetime(2026, 1, 1, 10, 0, 0))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("40000"),
+                    ts=datetime(2026, 1, 2, 10, 0, 0))
+    )
+    report = positions_report(rows)
+    pos = report.rows[0]
+    assert pos.values["roi"] == Decimal("-20.00")
+
+
+def test_roi_rounds_to_two_decimal_places():
+    # Buy 2 BTC @ 60000 total (wac=30000), sell 1 BTC @ 40000
+    # → pnl=10000, cost_basis_remaining=30000 → roi=33.33...% → 33.33
+    rows = (
+        make_buy("BTC", Decimal("2"), "EUR", Decimal("60000"),
+                 ts=datetime(2026, 1, 1, 10, 0, 0))
+        + make_sell("BTC", Decimal("1"), "EUR", Decimal("40000"),
+                    ts=datetime(2026, 1, 2, 10, 0, 0))
+    )
+    report = positions_report(rows)
+    pos = report.rows[0]
+    assert pos.values["roi"] == Decimal("33.33")
+
+
+def test_roi_is_none_when_cost_basis_zero():
+    # Row without a fiat quote leg → cost_basis stays 0 → roi = None
+    tid = str(uuid.uuid4())
+    rows = [
+        RawRow(id=tid, timestamp=_TS, type="BUY", asset="BTC",
+               amount=Decimal("1"), currency="EUR", price=None, venue="test"),
+        # No fiat leg → fiat_by_id has no entry → base_cost = 0
+    ]
+    report = positions_report(rows)
+    assert len(report.rows) == 1
+    assert report.rows[0].values["roi"] is None
+
+
+def test_roi_is_decimal_when_cost_basis_nonzero():
+    rows = make_buy("BTC", Decimal("1"), "EUR", Decimal("40000"))
+    report = positions_report(rows)
+    assert isinstance(report.rows[0].values["roi"], Decimal)

@@ -373,13 +373,15 @@ def test_empty_rows_returns_empty():
     assert compute_positions([]) == []
 
 
-def test_oversell_raises():
+def test_oversell_yields_negative_quantity():
+    """Over-sell must not raise — the position goes negative (diagnostic indicator)."""
     rows = (
         make_buy("t1", "BTC", Decimal("1"), "EUR", Decimal("40000"), ts=_ts(1))
         + make_sell("t2", "BTC", Decimal("2"), "EUR", Decimal("80000"), ts=_ts(2))
     )
-    with pytest.raises(ValueError, match="Cannot sell"):
-        compute_positions(rows)
+    result = compute_positions(rows)
+    btc = next(p for p in result if p.asset == "BTC")
+    assert btc.quantity == Decimal("-1")
 
 
 def test_custom_fiat_set():
