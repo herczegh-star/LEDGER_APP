@@ -12,7 +12,7 @@ dependencies = [
 ledgerapp = "ledger_app.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["core*", "io_module*", "ui*", "cli*", "ledger_app*"]
+include = ["core*", "io_module*", "ui*", "cli*", "ledger_app*", "ledger_engine*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
