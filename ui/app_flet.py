@@ -8,7 +8,7 @@ from typing import Optional
 
 import flet as ft
 
-from core.services.ui_facade import create_app_context, get_dashboard_snapshot
+from core.services.ui_facade import create_app_context, create_db, get_dashboard_snapshot, set_db_path
 
 # ── Color palette ──────────────────────────────────────────────────────────────
 BG       = "#0b0f14"
@@ -110,7 +110,7 @@ def _main_view_impl(page: ft.Page) -> None:
     page.window.width  = 1200
     page.window.height = 760
 
-    # ── Startup error guard ────────────────────────────────────────────────────
+    # ── Fatal error guard ──────────────────────────────────────────────────────
     if ctx.error:
         page.add(
             ft.Container(
@@ -122,6 +122,62 @@ def _main_view_impl(page: ft.Page) -> None:
                             size=12, color=T_MUT),
                 ], spacing=12),
                 padding=40,
+            )
+        )
+        return
+
+    # ── DB onboarding (DB_MISSING — non-fatal) ─────────────────────────────────
+    if ctx.db_state == "DB_MISSING":
+        status_txt = ft.Text("", size=12, color=RED)
+
+        def _do_create(_e=None) -> None:
+            result = create_db(ctx.db_path)
+            if result.success:
+                page.clean()
+                _main_view_impl(page)
+            else:
+                status_txt.value = result.error_message or "Failed to create database."
+                page.update()
+
+        def _pick_db_result(e: ft.FilePickerResultEvent) -> None:
+            if not e.files:
+                return
+            chosen = e.files[0].path
+            set_db_path(chosen)   # persist to ledger.ini
+            page.clean()
+            _main_view_impl(page)
+
+        db_picker = ft.FilePicker(on_result=_pick_db_result)
+        page.overlay.append(db_picker)
+
+        page.add(
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("No database found.", size=20,
+                            weight=ft.FontWeight.BOLD, color=T_PRI),
+                    ft.Text(
+                        f"Expected: {ctx.db_path}",
+                        size=12, color=T_MUT,
+                    ),
+                    ft.Row([
+                        ft.ElevatedButton(
+                            "Create DB",
+                            on_click=_do_create,
+                            bgcolor=BLUE,
+                            color=T_PRI,
+                        ),
+                        ft.OutlinedButton(
+                            "Select DB…",
+                            on_click=lambda _: db_picker.pick_files(
+                                dialog_title="Select existing ledger.db",
+                                allowed_extensions=["db"],
+                                allow_multiple=False,
+                            ),
+                        ),
+                    ], spacing=12),
+                    status_txt,
+                ], spacing=16),
+                padding=48,
             )
         )
         return

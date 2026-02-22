@@ -12,7 +12,7 @@ from typing import Callable
 
 import flet as ft
 
-from core.services.ui_facade import import_file
+from core.services.ui_facade import import_file, ImportResultDTO
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
 BG_CARD = "#131922"
@@ -108,19 +108,22 @@ def open_import_dialog(
         page.update()
 
         sheet = tf_sheet.value.strip() or None
-        try:
-            rows = import_file(db_path, path, sheet_name=sheet)
-        except Exception as exc:
+        result: ImportResultDTO = import_file(db_path, path, sheet_name=sheet)
+
+        if not result.success:
             btn_import.disabled = False
             btn_import.text = "Import"
-            status_text.value = str(exc)
+            status_text.value = result.error_message or "Import failed."
             status_text.color = RED
             page.update()
             return
 
         _close()
         page.show_dialog(ft.SnackBar(
-            ft.Text(f"{len(rows)} row(s) imported"),
+            ft.Text(
+                f"{result.rows_added} row(s) added, "
+                f"{result.rows_skipped} skipped (duplicates)"
+            ),
             duration=3000,
         ))
         on_success()

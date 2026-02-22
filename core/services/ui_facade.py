@@ -5,6 +5,7 @@ No UI module should import core internals directly.
 
 Public API:
     create_app_context(config_path) -> AppContextDTO
+    create_db(db_path) -> SimpleResultDTO
     get_dashboard_snapshot(db_path, price_provider, fiat) -> DashboardSnapshotDTO
     add_trade(request, db_path) -> AddTradeResultDTO
     get_ledger_rows(db_path) -> list
@@ -16,12 +17,13 @@ Public API:
     export_cashflow_to_csv(db_path, out_path, bucket, fiat) -> str
     export_netto_invested_to_csv(db_path, out_path, bucket, fiat) -> str
     export_positions_to_csv(db_path, out_path) -> str
-    import_file(db_path, file_path, sheet_name) -> list
+    import_file(db_path, file_path, sheet_name) -> ImportResultDTO
     reverse_trade(db_path, trade_id) -> list
 """
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -102,6 +104,24 @@ class AddTradeResultDTO:
 
     success: bool
     n_rows_added: int
+    error_message: Optional[str] = None
+
+
+@dataclass
+class SimpleResultDTO:
+    """Generic success/failure result for one-shot operations (e.g. create_db)."""
+
+    success: bool
+    error_message: Optional[str] = None
+
+
+@dataclass
+class ImportResultDTO:
+    """Result of import_file().  Never raises — errors go into error_message."""
+
+    success: bool
+    rows_added: int
+    rows_skipped: int
     error_message: Optional[str] = None
 
 
@@ -365,7 +385,8 @@ class AppContextDTO:
     fiat: str
     price_provider: Any            # CachedPriceProvider or None
     version: str = "1.0.0"
-    error: Optional[str] = None    # non-None means startup failed; UI shows error page
+    db_state: str = "OK"           # "OK" | "DB_MISSING" | "DB_ERROR"
+    error: Optional[str] = None    # non-None for fatal errors (DB_ERROR / config error)
 
 
 def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
@@ -407,7 +428,14 @@ def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
         return AppContextDTO(db_path="", fiat=fiat, price_provider=None,
                              version=_version, error=msg)
 
-    # ── Probe DB (creates on first run; catches locked/bad-path errors) ───────
+    # ── Probe DB ──────────────────────────────────────────────────────────────
+    # Non-fatal: file simply doesn't exist yet → DB_MISSING (onboarding flow).
+    # Fatal: file exists but can't be opened (locked, corrupted) → DB_ERROR.
+    if not os.path.exists(db_path):
+        logger.info("Database not found (onboarding): %s", db_path)
+        return AppContextDTO(db_path=db_path, fiat=fiat, price_provider=None,
+                             version=_version, db_state="DB_MISSING")
+
     try:
         store = LedgerStore(db_path)
         store.close()
@@ -416,7 +444,7 @@ def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
         msg = f"Cannot open database '{db_path}': {exc}"
         logger.error(msg, exc_info=True)
         return AppContextDTO(db_path=db_path, fiat=fiat, price_provider=None,
-                             version=_version, error=msg)
+                             version=_version, db_state="DB_ERROR", error=msg)
 
     # ── Price provider (failure is non-fatal) ─────────────────────────────────
     price_provider = None
@@ -433,6 +461,43 @@ def create_app_context(config_path: Optional[str] = None) -> AppContextDTO:
         price_provider=price_provider,
         version=_version,
     )
+
+
+def set_db_path(new_db_path: str) -> SimpleResultDTO:
+    """Persist *new_db_path* into ledger.ini and return a result.
+
+    Used by the onboarding UI to let the user select an existing DB.
+    """
+    try:
+        from core.config import set_db_path as _sdp
+        _sdp(new_db_path)
+        logger.info("db_path updated to: %s", new_db_path)
+        return SimpleResultDTO(success=True)
+    except Exception as exc:
+        msg = f"Failed to update db_path: {exc}"
+        logger.error(msg, exc_info=True)
+        return SimpleResultDTO(success=False, error_message=msg)
+
+
+def create_db(db_path: str) -> SimpleResultDTO:
+    """Create (or open) the SQLite ledger DB at *db_path*.
+
+    Idempotent — safe to call even if the DB already exists.
+
+    Returns:
+        SimpleResultDTO(success=True) on success.
+        SimpleResultDTO(success=False, error_message=...) on failure.
+    """
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        store = LedgerStore(db_path)
+        store.close()
+        logger.info("Database created/verified: %s", db_path)
+        return SimpleResultDTO(success=True)
+    except Exception as exc:
+        msg = f"Failed to create database '{db_path}': {exc}"
+        logger.error(msg, exc_info=True)
+        return SimpleResultDTO(success=False, error_message=msg)
 
 
 # ── Low-level data access ──────────────────────────────────────────────────────
@@ -586,10 +651,45 @@ def import_file(
     db_path: str,
     file_path: str,
     sheet_name: Optional[str] = None,
-) -> list:
-    """Import a unified_format_raw file and return inserted RawRow list."""
+) -> ImportResultDTO:
+    """Import a unified_format_raw file.
+
+    Returns:
+        ImportResultDTO with rows_added, rows_skipped, and success flag.
+        Never raises — errors go into ImportResultDTO.error_message.
+    """
     from core.services.unified_import_service import import_unified_file as _iuf
-    return _iuf(db_path, file_path, sheet_name=sheet_name)
+
+    # Count rows before import to derive inserted vs skipped.
+    try:
+        store = LedgerStore(db_path)
+        try:
+            before = store.count()
+        finally:
+            store.close()
+    except Exception as exc:
+        return ImportResultDTO(success=False, rows_added=0, rows_skipped=0,
+                               error_message=str(exc))
+
+    try:
+        rows = _iuf(db_path, file_path, sheet_name=sheet_name)
+    except Exception as exc:
+        return ImportResultDTO(success=False, rows_added=0, rows_skipped=0,
+                               error_message=str(exc))
+
+    try:
+        store = LedgerStore(db_path)
+        try:
+            after = store.count()
+        finally:
+            store.close()
+    except Exception:
+        after = before + len(rows)  # fallback: assume all inserted
+
+    rows_added = after - before
+    rows_skipped = max(0, len(rows) - rows_added)
+    return ImportResultDTO(success=True, rows_added=rows_added,
+                           rows_skipped=rows_skipped)
 
 
 # ── Reversal ───────────────────────────────────────────────────────────────────
