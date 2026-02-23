@@ -63,22 +63,26 @@ def open_import_dialog(
     status_text = ft.Text("", size=12, color=T_MUT)
 
     # ── File picker (native OS dialog) ──────────────────────────────────────
-    file_picker = ft.FilePicker()  # Service — self-registers with page context
-
-    async def on_browse(_e=None) -> None:
-        files = await file_picker.pick_files(
-            dialog_title="Select unified_format_raw file",
-            allowed_extensions=["csv", "xlsx", "xlsm"],
-            allow_multiple=False,
-        )
-        if not files:
+    def _on_pick_result(e: ft.FilePickerResultEvent) -> None:
+        if not e.files:
             return
-        path = files[0].path
+        path = e.files[0].path
         selected_path[0] = path
         file_label.value = path
         file_label.color = T_PRI
         status_text.value = ""
         page.update()
+
+    file_picker = ft.FilePicker(on_result=_on_pick_result)
+    page.overlay.append(file_picker)
+    page.update()
+
+    def on_browse(_e=None) -> None:
+        file_picker.pick_files(
+            dialog_title="Select unified_format_raw file",
+            allowed_extensions=["csv", "xlsx", "xlsm"],
+            allow_multiple=False,
+        )
 
     btn_browse.on_click = on_browse
 

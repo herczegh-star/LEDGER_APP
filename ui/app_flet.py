@@ -25,14 +25,16 @@ _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 
 from core.services.ui_facade import create_app_context, create_db, get_dashboard_snapshot, set_db_path
 
-# ── Color palette ──────────────────────────────────────────────────────────────
+# ── Color palette (decent / less neon) ──────────────────────────────────────
 BG = "#0b0f14"
-BG_CARD = "#131922"
+BG_CARD = "#0f1621"      # darker card
 BG_HDR = "#0d1117"
 BORDER = "#1e293b"
+
 T_PRI = "#e2e8f0"
-T_MUT = "#64748b"
-GREEN = "#22c55e"
+T_MUT = "#7b8799"        # slightly brighter muted text for legibility
+
+GREEN = "#16a34a"        # less neon than #22c55e
 RED = "#ef4444"
 BLUE = "#1d4ed8"
 
@@ -162,20 +164,22 @@ def _main_view_impl(page: ft.Page) -> None:
                 status_txt.value = result.error_message or "Failed to create database."
                 page.update()
 
-        db_picker = ft.FilePicker()
+        def _on_db_pick(e: ft.FilePickerResultEvent) -> None:
+            if not e.files:
+                return
+            set_db_path(e.files[0].path)
+            page.clean()
+            _main_view_impl(page)
 
-        async def _pick_db(_e=None) -> None:
-            files = await db_picker.pick_files(
+        db_picker = ft.FilePicker(on_result=_on_db_pick)
+        page.overlay.append(db_picker)
+
+        def _pick_db(_e=None) -> None:
+            db_picker.pick_files(
                 dialog_title="Select existing ledger.db",
                 allowed_extensions=["db"],
                 allow_multiple=False,
             )
-            if not files:
-                return
-            chosen = files[0].path
-            set_db_path(chosen)
-            page.clean()
-            _main_view_impl(page)
 
         page.add(
             ft.Container(
@@ -214,7 +218,7 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # Dynamic regions
     pills_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
-    cards_col = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+    cards_col = ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)  # CHANGED (was 10)
 
     # ── KPI update ─────────────────────────────────────────────────────────────
     def update_kpis() -> None:
@@ -259,7 +263,7 @@ def _main_view_impl(page: ft.Page) -> None:
                     color=T_PRI if active else T_MUT,
                     weight=ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL,
                 ),
-                bgcolor=BLUE if active else BORDER,
+                bgcolor=BLUE if active else "#162030",   # less contrast than BORDER
                 border_radius=20,
                 padding=ft.padding.symmetric(6, 14),
                 on_click=on_click,
@@ -272,8 +276,8 @@ def _main_view_impl(page: ft.Page) -> None:
     def build_cards() -> None:
         def make_card(p) -> ft.Container:
             unr = p.unrealized_pnl
-            roi_total = p.roi_total  # fraction
-            roi_real = p.roi_realized  # % points from core
+            roi_total = p.roi_total      # fraction
+            roi_real = p.roi_realized    # % points from core
             bc = GREEN if (unr is not None and unr >= 0) else RED if (unr is not None) else BORDER
 
             def on_detail(e, a=p.asset) -> None:
@@ -286,6 +290,17 @@ def _main_view_impl(page: ft.Page) -> None:
                     tight=True,
                 )
 
+            # Softer, ambient glow (more blur + transparency), not neon outline
+            glow = None
+            if bc != BORDER:
+                glow = ft.BoxShadow(
+                    spread_radius=0,
+                    blur_radius=32,     # CHANGED (was 26)
+                    color=bc + "33",    # CHANGED (was "55")
+                    offset=ft.Offset(0, 0),
+                    blur_style=ft.BlurStyle.OUTER,
+                )
+
             return ft.Container(
                 content=ft.Column(
                     [
@@ -294,8 +309,18 @@ def _main_view_impl(page: ft.Page) -> None:
                                 ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
                                 ft.Row(
                                     [
-                                        ft.Text(_czk(unr, sign=True), size=14, weight=ft.FontWeight.W_600, color=_color(unr)),
-                                        ft.Text(_pct(roi_total), size=14, weight=ft.FontWeight.W_600, color=_color(roi_total)),
+                                        ft.Text(
+                                            _czk(unr, sign=True),
+                                            size=14,
+                                            weight=ft.FontWeight.W_600,
+                                            color=_color(unr),
+                                        ),
+                                        ft.Text(
+                                            _pct(roi_total),
+                                            size=14,
+                                            weight=ft.FontWeight.W_600,
+                                            color=_color(roi_total),
+                                        ),
                                         ft.TextButton(
                                             "Detail",
                                             on_click=on_detail,
@@ -308,7 +333,7 @@ def _main_view_impl(page: ft.Page) -> None:
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
-                        ft.Divider(height=1, color=BORDER),
+                        ft.Divider(height=1, color="#1f2a3a"),  # CHANGED (was "#243244")
                         ft.Row(
                             [
                                 stat("Amount", _amt(p.quantity, p.asset)),
@@ -324,16 +349,10 @@ def _main_view_impl(page: ft.Page) -> None:
                     spacing=12,
                 ),
                 bgcolor=BG_CARD,
-                border=ft.border.all(1, bc),
-                border_radius=10,
+                border=ft.border.all(1, "#223046"),      # consistent, less “status-outline”
+                border_radius=12,
                 padding=16,
-                shadow=ft.BoxShadow(
-                    spread_radius=0,
-                    blur_radius=10,
-                    color=bc if bc != BORDER else "#00000000",
-                    offset=ft.Offset(0, 0),
-                    blur_style=ft.BlurStyle.OUTER,
-                ) if bc != BORDER else None,
+                shadow=glow,
             )
 
         if raw:
@@ -370,8 +389,8 @@ def _main_view_impl(page: ft.Page) -> None:
             expand=True,
             padding=ft.padding.symmetric(14, 20),
             bgcolor=BG_CARD,
-            border=ft.border.all(1, BORDER),
-            border_radius=10,
+            border=ft.border.all(1, "#223046"),
+            border_radius=12,
         )
 
     # ── Dashboard view (REAL) ──────────────────────────────────────────────────
@@ -437,24 +456,54 @@ def _main_view_impl(page: ft.Page) -> None:
             _content.content = _ledger_view
             _run_ledger()
         page.update()
+        # Note: _rebuild_nav_col() is called by _build_nav_btn click handler before set_view.
 
-    def _on_nav(e) -> None:
-        set_view(e.control.selected_index)
+    # ── Custom vertical nav (replaces ft.NavigationRail — too buggy in Flet 0.80) ──
+    _NAV_ITEMS = [
+        (ft.Icons.DASHBOARD_OUTLINED,        ft.Icons.DASHBOARD,             "Dashboard"),
+        (ft.Icons.BAR_CHART_OUTLINED,        ft.Icons.BAR_CHART,             "Reports"),
+        (ft.Icons.TABLE_CHART_OUTLINED,      ft.Icons.TABLE_CHART,           "Positions"),
+        (ft.Icons.HEALTH_AND_SAFETY_OUTLINED,ft.Icons.HEALTH_AND_SAFETY,     "Health"),
+        (ft.Icons.LIST_ALT_OUTLINED,         ft.Icons.LIST_ALT,              "Ledger"),
+    ]
+    _nav_idx = [0]
+    _nav_col = ft.Column(spacing=2, tight=True)
 
-    _nav = ft.NavigationRail(
-        selected_index=0,
-        on_change=_on_nav,
-        min_width=72,
-        bgcolor=BG_HDR,
-        indicator_color=BLUE,
-        destinations=[
-            ft.NavigationRailDestination(icon="dashboard_outlined", label="Dashboard"),
-            ft.NavigationRailDestination(icon="bar_chart_outlined", label="Reports"),
-            ft.NavigationRailDestination(icon="table_chart_outlined", label="Positions"),
-            ft.NavigationRailDestination(icon="health_and_safety_outlined", label="Health"),
-            ft.NavigationRailDestination(icon="table_rows_outlined", label="Ledger"),
-        ],
-    )
+    def _build_nav_btn(idx: int) -> ft.Container:
+        active = _nav_idx[0] == idx
+        icon_off, icon_on, label = _NAV_ITEMS[idx]
+
+        def _click(e, i=idx):
+            _nav_idx[0] = i
+            _rebuild_nav_col()
+            set_view(i)
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Icon(icon_on if active else icon_off,
+                            color=T_PRI if active else T_MUT, size=20),
+                    ft.Text(label, size=9, color=T_PRI if active else T_MUT,
+                            text_align=ft.TextAlign.CENTER, width=72),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=3,
+                tight=True,
+            ),
+            padding=ft.padding.symmetric(10, 4),
+            bgcolor=BLUE + "55" if active else "transparent",
+            border_radius=8,
+            on_click=_click,
+            ink=True,
+            width=80,
+            margin=ft.margin.symmetric(2, 4),
+        )
+
+    def _rebuild_nav_col() -> None:
+        _nav_col.controls = [_build_nav_btn(i) for i in range(len(_NAV_ITEMS))]
+        # page.update() is called by the outer set_view — no need to update here.
+
+    _rebuild_nav_col()
 
     def _refresh_all() -> None:
         refresh()
@@ -506,18 +555,43 @@ def _main_view_impl(page: ft.Page) -> None:
     )
 
     # ── Body ──────────────────────────────────────────────────────────────────
-    # IMPORTANT: fix left rail width so it cannot steal content width
-    _nav_host = ft.Container(width=88, bgcolor=BG_HDR, content=_nav)
+    # NavigationRail MUST be wrapped in a Container — bare Row child breaks Flutter layout.
+    # expand=True inside a Container is invalid Flutter (Expanded requires Flex parent),
+    # so we give both the Container AND the Row an explicit pixel height instead.
+    _HEADER_H = 54   # approximate header height (px)
+    _body_h = int(page.window.height) - _HEADER_H
 
+    _nav_host = ft.Container(
+        width=88,
+        height=_body_h,
+        bgcolor=BG_HDR,
+        content=ft.Column(
+            [ft.Container(height=8), _nav_col],
+            spacing=0,
+            tight=True,
+        ),
+        padding=0,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+    )
     _body_row = ft.Row(
         [_nav_host, ft.VerticalDivider(width=1, color=BORDER), _content],
-        expand=True,
+        height=_body_h,
         spacing=0,
         vertical_alignment=ft.CrossAxisAlignment.STRETCH,
     )
 
+    def _on_resize(e=None) -> None:
+        h = int(page.window.height) - _HEADER_H
+        _body_row.height = h
+        _nav_host.height = h
+        page.update()
+
+    page.on_resize = _on_resize
+
     page.controls.clear()
+    _blog(f"BODY: adding _header + _body_row(h={_body_row.height})  nav_host in slot[0]={_body_row.controls[0] is _nav_host}")
     page.add(_header, _body_row)
+    _blog(f"BODY: page.controls={len(page.controls)}  window={page.window.width}x{page.window.height}")
 
     # Explicit initial view (NavigationRail does NOT fire on startup)
     set_view(0)

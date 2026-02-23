@@ -192,8 +192,8 @@ def build_health_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable]
             data_rows.append(ft.DataRow(cells=cells))
 
         table_area.controls = [
-            ft.SingleChildScrollView(
-                content=ft.DataTable(
+            ft.Row(
+                [ft.DataTable(
                     columns=col_defs,
                     rows=data_rows,
                     border=ft.border.all(1, BORDER),
@@ -202,8 +202,8 @@ def build_health_view(page: ft.Page, db_path: str) -> Tuple[ft.Column, Callable]
                     heading_row_color=BG_HDR,
                     data_row_color={"hovered": "#1e2a3a"},
                     column_spacing=16,
-                ),
-                scroll_direction=ft.ScrollMode.HORIZONTAL,
+                )],
+                scroll=ft.ScrollMode.AUTO,
             )
         ]
         page.update()

@@ -336,8 +336,8 @@ def build_ledger_view(
             ]))
 
         table_area.controls = [
-            ft.SingleChildScrollView(
-                content=ft.DataTable(
+            ft.Row(
+                [ft.DataTable(
                     columns=col_defs,
                     rows=data_rows,
                     border=ft.border.all(1, BORDER),
@@ -347,8 +347,8 @@ def build_ledger_view(
                     data_row_color={"hovered": "#1e2a3a"},
                     column_spacing=16,
                     data_text_style=ft.TextStyle(size=11),
-                ),
-                scroll_direction=ft.ScrollMode.HORIZONTAL,
+                )],
+                scroll=ft.ScrollMode.AUTO,
             )
         ]
 
