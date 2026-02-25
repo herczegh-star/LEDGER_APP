@@ -3,6 +3,7 @@
 Entrypoint: call run_ui() from main.py.
 """
 
+import threading
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -164,22 +165,26 @@ def _main_view_impl(page: ft.Page) -> None:
                 status_txt.value = result.error_message or "Failed to create database."
                 page.update()
 
-        def _on_db_pick(e: ft.FilePickerResultEvent) -> None:
-            if not e.files:
-                return
-            set_db_path(e.files[0].path)
-            page.clean()
-            _main_view_impl(page)
-
-        db_picker = ft.FilePicker(on_result=_on_db_pick)
-        page.overlay.append(db_picker)
-
         def _pick_db(_e=None) -> None:
-            db_picker.pick_files(
-                dialog_title="Select existing ledger.db",
-                allowed_extensions=["db"],
-                allow_multiple=False,
-            )
+            def _open_dialog() -> None:
+                import tkinter as tk
+                from tkinter import filedialog
+
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                path = filedialog.askopenfilename(
+                    title="Select existing ledger.db",
+                    filetypes=[("SQLite database", "*.db"), ("All files", "*.*")],
+                )
+                root.destroy()
+                if path:
+                    set_db_path(path)
+                    page.clean()
+                    _main_view_impl(page)
+                    page.update()
+
+            threading.Thread(target=_open_dialog, daemon=True).start()
 
         page.add(
             ft.Container(

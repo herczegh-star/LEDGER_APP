@@ -8,6 +8,7 @@ core/services/unified_import_service.import_unified_file().
 """
 from __future__ import annotations
 
+import threading
 from typing import Callable
 
 import flet as ft
@@ -62,27 +63,33 @@ def open_import_dialog(
 
     status_text = ft.Text("", size=12, color=T_MUT)
 
-    # ── File picker (native OS dialog) ──────────────────────────────────────
-    def _on_pick_result(e: ft.FilePickerResultEvent) -> None:
-        if not e.files:
-            return
-        path = e.files[0].path
-        selected_path[0] = path
-        file_label.value = path
-        file_label.color = T_PRI
-        status_text.value = ""
-        page.update()
-
-    file_picker = ft.FilePicker(on_result=_on_pick_result)
-    page.overlay.append(file_picker)
-    page.update()
-
+    # ── File picker (native OS dialog via tkinter — avoids Flet FilePicker bugs) ──
     def on_browse(_e=None) -> None:
-        file_picker.pick_files(
-            dialog_title="Select unified_format_raw file",
-            allowed_extensions=["csv", "xlsx", "xlsm"],
-            allow_multiple=False,
-        )
+        def _open_dialog() -> None:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askopenfilename(
+                title="Select unified_format_raw file",
+                filetypes=[
+                    ("All supported", "*.csv *.xlsx *.xlsm"),
+                    ("CSV files", "*.csv"),
+                    ("Excel files", "*.xlsx *.xlsm"),
+                    ("All files", "*.*"),
+                ],
+            )
+            root.destroy()
+            if path:
+                selected_path[0] = path
+                file_label.value = path
+                file_label.color = T_PRI
+                status_text.value = ""
+                page.update()
+
+        threading.Thread(target=_open_dialog, daemon=True).start()
 
     btn_browse.on_click = on_browse
 
