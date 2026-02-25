@@ -11,36 +11,62 @@ Chci nástroj pro sebe, který funguje a dává mi klid.
 
 ## Co aplikace JE
 
-LEDGER_APP je tokový (append-only) ledger nad SQLite databází.
+LEDGER_APP je tokový (append-only) ledger nad SQLite databází s Flet desktop UI.
 
 - Každý řádek je atomický tok aktiva.
 - Pravda je v datech (ledger), ne v odvozených výpočtech.
 - Oprava = REVERSAL (žádné UPDATE/DELETE).
 - Double-entry pro trade.
-- Fingerprint deduplikace.
-
-Aplikace umí:
-- zapisovat transakce
-- importovat CSV/XLSM
-- počítat asset_balances
-- počítat venue_balances
-- zobrazit timeline
-- exportovat RAW data
+- Fingerprint deduplikace (SHA-256).
 
 ---
 
-## Co aplikace ZATÍM NEDĚLÁ
+## Aktuální stav – co funguje ✓
 
-Aplikace zatím není dashboard investic.
+### Core / datová vrstva
+- SQLite append-only databáze
+- Import CSV / XLSM (unified_format_raw)
+- Deduplikace při importu
+- Validace syntaxe (ne ekonomiky)
+- Diagnostika záporných zůstatků (warning, ne blokace)
+- REVERSAL opravné toky
 
-Neumí:
-- průměrnou nákupní cenu
-- P/L
-- netto fiat invested
-- přehled pozic jako “portfolio view”
+### Flet UI (desktop aplikace)
+- Spouštění: `python main.py`
+- Levé menu: Dashboard, Reports, Positions, Health, Ledger
+- Header s akcemi: Add Trade, Reverse, Import, Export, Refresh
 
-Tohle je interpretační vrstva nad ledgerem,
-ne samotný ledger.
+### Dashboard
+- Portfolio Value (celková hodnota v CZK)
+- Unrealized PnL (nerealizovaný zisk/ztráta)
+- ROI (celkový výnos v %)
+- Asset karty: množství, průměrná nákupní cena (WAC), cost basis,
+  spot cena, aktuální hodnota, ROI (realized)
+- Sort pillky: ROI, PnL, Value, A–Z
+
+### Ledger view
+- Tabulka všech transakcí (plná šířka okna)
+- Filtrování: vyhledávání, typ, venue, řazení
+- Reverse akce přímo z řádku
+
+### Health view
+- Diagnostická tabulka stavů portfolia
+
+### Positions view
+- WAC přehled pozic s cenou
+
+### Reports view
+- Přehledy nad ledgerem
+
+---
+
+## Co aplikace ZATÍM NEDĚLÁ ✗
+
+- Parsery pro burzy (Anycoin, Bybit, Kraken, Revolut) – manuální import
+- Daňová legislativa
+- Automatické opravy
+- Detail view na jednotlivé assety (TODO placeholder)
+- Live ceny jsou aproximace (žádný API klíč pro burzy)
 
 ---
 
@@ -51,29 +77,32 @@ ne samotný ledger.
 - Oprava = REVERSAL
 - Validator kontroluje syntaxi, ne ekonomiku
 - Diagnostika varuje, nikdy neblokuje
+- 4 vrstvy: I/O → Core → Workflow → Flet UI
 
 Nezavádět zbytečnou složitost.
 
 ---
 
-## Aktuální realita
+## Technologie
 
-Ledger vrstva je hotová a stabilní.
-Chybí jednoduchá interpretační/reportovací vrstva,
-která z ledgeru vytvoří přehled investic.
+- Python 3.10+
+- Flet 0.80.x (desktop UI)
+- SQLite (append-only ledger store)
+- openpyxl (čtení .xlsm)
+
+### Klíčové Flet 0.80 poznatky
+- `ft.run(fn)` místo `ft.app(target=fn)`
+- `ft.Icons.XXX` (velké I) pro ikony
+- `ft.NavigationRail` nefunguje → custom Column nav
+- `ft.FilePicker` vyžaduje `page.overlay.append()`
+- `ft.SingleChildScrollView` neexistuje → `ft.Row(scroll=AUTO)`
+- `ft.DataTable` neroztahuje se přes `expand` → `column_spacing=58`
 
 ---
 
-## Aktuální priorita
+## Další kroky (backlog)
 
-Přidat jednoduché reporty nad existujícím ledgerem:
-
-1. Positions report:
-   - aktuální balance per asset
-   - průměrná nákupní cena
-   - netto investovaný fiat
-
-2. Jednoduchý cashflow report podle měny.
-
-Cíl:
-Mít přehled o investicích bez změny core architektury.
+1. **Parsery pro burzy** – I/O modul: Anycoin, Bybit, Kraken, Revolut
+2. **Detail view** – kliknutí na asset → historia transakcí, P/L chart
+3. **Export** – CSV / RAW výstupy (cashflow, P/L, daňový podklad)
+4. **Live ceny** – integrace cenového API (CoinGecko nebo burzy)
