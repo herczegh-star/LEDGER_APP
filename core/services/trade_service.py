@@ -21,6 +21,31 @@ from core.model import RawRow
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 
 
+def generate_canonical_id(
+    timestamp: datetime,
+    venue: str,
+    type_str: str,
+    conn,
+) -> str:
+    """Generate canonical ID: yyyymmdd_hhmmss_VENUE_TYPE_SEQ.
+
+    SEQ = COUNT(DISTINCT id) in ledger for same (timestamp, venue, type) + 1.
+    Deterministic for a given DB state; double-entry rows sharing one call
+    will receive the same ID string.
+    """
+    ts_part = timestamp.strftime("%Y%m%d_%H%M%S")
+    venue_upper = venue.upper()
+    type_upper = type_str.upper()
+
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT id) FROM ledger "
+        "WHERE timestamp = ? AND venue = ? AND type = ?",
+        (timestamp.isoformat(), venue.lower(), type_upper),
+    ).fetchone()
+    seq = (row[0] if row else 0) + 1
+    return f"{ts_part}_{venue_upper}_{type_upper}_{seq:03d}"
+
+
 @dataclass
 class TradeResult:
     """Return value of add_trade() — generated rows plus dedup counters."""
@@ -69,6 +94,7 @@ def _validate(inp: AddTradeInput, fiat: FrozenSet[str]) -> None:
 def build_trade_rows(
     inp: AddTradeInput,
     fiat: FrozenSet[str] = _FIAT_DEFAULT,
+    trade_id: Optional[str] = None,
 ) -> List[RawRow]:
     """Pure function — no side-effects.
 
@@ -81,7 +107,8 @@ def build_trade_rows(
     """
     _validate(inp, fiat)
 
-    trade_id = str(uuid.uuid4())
+    if trade_id is None:
+        trade_id = str(uuid.uuid4())  # fallback for direct calls / tests
     base = inp.base_asset.upper()
     quote = inp.quote_currency.upper()
     price = inp.quote_amount / inp.base_amount   # informational unit price
@@ -147,9 +174,10 @@ def add_trade(
     Raises ValueError on invalid input (before touching DB).
     Returns TradeResult with the generated rows and inserted/skipped counts.
     """
-    rows = build_trade_rows(inp, fiat)
     store = LedgerStore(db_path)
     try:
+        trade_id = generate_canonical_id(inp.timestamp, inp.venue, inp.type, store.conn)
+        rows = build_trade_rows(inp, fiat, trade_id=trade_id)
         counts = store.import_rows(rows)
     finally:
         store.close()

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -41,6 +40,7 @@ from core.service import LedgerService
 from core.services.portfolio_snapshot_service import get_portfolio_snapshot
 from core.services.trade_service import AddTradeInput
 from core.services.trade_service import add_trade as _core_add_trade
+from core.services.trade_service import generate_canonical_id
 
 _ROI_PLACES = Decimal("0.01")
 _ZERO = Decimal("0")
@@ -382,20 +382,20 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             ),
         )
 
-    row = RawRow(
-        id=str(uuid.uuid4()),
-        timestamp=request.timestamp,
-        type=request.type,
-        asset=asset,
-        amount=request.amount,       # signed as-is (caller controls direction)
-        currency=eff_currency,
-        price=price,
-        venue=venue,
-        note=request.note,
-    )
-
     store = LedgerStore(db_path)
     try:
+        canonical_id = generate_canonical_id(request.timestamp, venue, request.type, store.conn)
+        row = RawRow(
+            id=canonical_id,
+            timestamp=request.timestamp,
+            type=request.type,
+            asset=asset,
+            amount=request.amount,       # signed as-is (caller controls direction)
+            currency=eff_currency,
+            price=price,
+            venue=venue,
+            note=request.note,
+        )
         counts = store.import_rows([row])
     finally:
         store.close()
