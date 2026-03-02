@@ -42,15 +42,16 @@ _COLS = [
     ("roi_total",      "ROI Total"),
 ]
 
-# Sort option definitions: (dropdown key, label)
-_SORT_OPTIONS = [
-    ("az",         "Asset A→Z"),
-    ("cost_desc",  "Cost Basis ↓"),
-    ("qty_desc",   "Quantity ↓"),
-    ("pnl_desc",   "Realized P&L ↓"),
+# Sort button definitions: (field key, label)
+_SORT_FIELDS = [
+    ("roi_total",   "ROI Total"),
+    ("unrealized",  "PnL"),
+    ("value",       "Value"),
+    ("name",        "Name"),
 ]
 
-_ZERO = Decimal("0")
+_ZERO    = Decimal("0")
+_NEG_INF = Decimal("-999999999999")
 
 
 # ── Pure filter/sort helper ──────────────────────────────────────────────────
@@ -71,7 +72,12 @@ def filter_and_sort_rows(
         search:     Case-insensitive substring filter on ``p.asset``.
                     Empty string disables the filter.
         hide_zeros: If True, rows where ``p.quantity == 0`` are excluded.
-        sort_key:   One of "az", "cost_desc", "qty_desc", "pnl_desc".
+        sort_key:   One of "az", "cost_desc", "qty_desc", "pnl_desc"
+                    (legacy) or the toggle-button keys:
+                    "roi_total_desc", "roi_total_asc",
+                    "unrealized_desc", "unrealized_asc",
+                    "value_desc", "value_asc",
+                    "name_asc", "name_desc".
 
     Returns:
         New list — input is not mutated.
@@ -96,7 +102,39 @@ def filter_and_sort_rows(
         result.sort(key=lambda p: p.quantity, reverse=True)
     elif sort_key == "pnl_desc":
         result.sort(key=lambda p: p.realized_pnl, reverse=True)
-    # Unknown sort_key falls back to list order (which is already "az" from report)
+    # ── Toggle-button sort keys ───────────────────────────────────────────────
+    elif sort_key == "roi_total_desc":
+        result.sort(
+            key=lambda p: p.roi_total if p.roi_total is not None else _NEG_INF,
+            reverse=True,
+        )
+    elif sort_key == "roi_total_asc":
+        result.sort(
+            key=lambda p: p.roi_total if p.roi_total is not None else _NEG_INF,
+        )
+    elif sort_key == "unrealized_desc":
+        result.sort(
+            key=lambda p: p.unrealized_pnl if p.unrealized_pnl is not None else _NEG_INF,
+            reverse=True,
+        )
+    elif sort_key == "unrealized_asc":
+        result.sort(
+            key=lambda p: p.unrealized_pnl if p.unrealized_pnl is not None else _NEG_INF,
+        )
+    elif sort_key == "value_desc":
+        result.sort(
+            key=lambda p: p.value if p.value is not None else _NEG_INF,
+            reverse=True,
+        )
+    elif sort_key == "value_asc":
+        result.sort(
+            key=lambda p: p.value if p.value is not None else _NEG_INF,
+        )
+    elif sort_key == "name_asc":
+        result.sort(key=lambda p: p.asset)
+    elif sort_key == "name_desc":
+        result.sort(key=lambda p: p.asset, reverse=True)
+    # Unknown sort_key falls back to list order
 
     return result
 
@@ -151,6 +189,9 @@ def build_positions_view(
     # ── State: cached PositionDTO list ────────────────────────────────────────
     _report_holder: list = [None]   # [list[PositionDTO] | None]
 
+    # ── Sort state: field + direction ─────────────────────────────────────────
+    _sort = {"field": "roi_total", "asc": False}  # default: ROI Total DESC
+
     # ── Controls ─────────────────────────────────────────────────────────────
     tf_search = ft.TextField(
         hint_text="Search asset…",
@@ -173,16 +214,6 @@ def build_positions_view(
         label_style=ft.TextStyle(color=T_MUT, size=13),
     )
 
-    dd_sort = ft.Dropdown(
-        label="Sort by",
-        width=180,
-        bgcolor=BG_CARD,
-        border_color=BORDER,
-        text_style=ft.TextStyle(color=T_PRI, size=13),
-        options=[ft.dropdown.Option(k, label) for k, label in _SORT_OPTIONS],
-        value="az",
-    )
-
     status_txt = ft.Text("", size=12, color=T_MUT)
     table_area = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
 
@@ -198,16 +229,61 @@ def build_positions_view(
             numeric=True,
         ))
 
+    # ── Sort buttons ──────────────────────────────────────────────────────────
+    def _active_style() -> ft.ButtonStyle:
+        return ft.ButtonStyle(
+            bgcolor={"": "#1d4ed8"},
+            color={"": T_PRI},
+            padding=ft.padding.symmetric(0, 14),
+        )
+
+    def _inactive_style() -> ft.ButtonStyle:
+        return ft.ButtonStyle(
+            bgcolor={"": "#1e2533"},
+            color={"": T_MUT},
+            side={"": ft.BorderSide(1, BORDER)},
+            padding=ft.padding.symmetric(0, 14),
+        )
+
+    _sort_btns: dict[str, ft.ElevatedButton] = {}
+
+    def _on_sort_click(field: str) -> None:
+        if _sort["field"] == field:
+            _sort["asc"] = not _sort["asc"]
+        else:
+            _sort["field"] = field
+            _sort["asc"] = False
+        for f, btn in _sort_btns.items():
+            btn.style = _active_style() if f == _sort["field"] else _inactive_style()
+        _render()
+
+    for field, label in _SORT_FIELDS:
+        btn = ft.ElevatedButton(
+            label,
+            style=_active_style() if field == "roi_total" else _inactive_style(),
+            on_click=lambda _e, f=field: _on_sort_click(f),
+            height=36,
+        )
+        _sort_btns[field] = btn
+
+    sort_row = ft.Row(
+        list(_sort_btns.values()),
+        spacing=6,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
     # ── Render: apply filter/sort and rebuild table ───────────────────────────
     def _render() -> None:
         source = _report_holder[0] or []
         total_source = len(source)
 
+        sort_key = f"{_sort['field']}_{'asc' if _sort['asc'] else 'desc'}"
+
         visible = filter_and_sort_rows(
             source,
             search=tf_search.value or "",
             hide_zeros=cb_hide_zeros.value or False,
-            sort_key=dd_sort.value or "az",
+            sort_key=sort_key,
         )
 
         data_rows = []
@@ -254,10 +330,9 @@ def build_positions_view(
             status_txt.value = f"{total_source} asset{'s' if total_source != 1 else ''}"
         page.update()
 
-    # ── Control callbacks (filter/sort only — no DB re-fetch) ─────────────────
+    # ── Control callbacks (filter only — no DB re-fetch) ──────────────────────
     tf_search.on_change     = lambda _e=None: _render()
     cb_hide_zeros.on_change = lambda _e=None: _render()
-    dd_sort.on_change       = lambda _e=None: _render()
 
     # ── Export button ─────────────────────────────────────────────────────────
     def _on_export(_e=None) -> None:
@@ -290,8 +365,6 @@ def build_positions_view(
         [
             tf_search,
             cb_hide_zeros,
-            dd_sort,
-            export_btn,
         ],
         spacing=12,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -302,9 +375,12 @@ def build_positions_view(
             ft.Row([
                 ft.Text("Positions", size=20,
                         weight=ft.FontWeight.BOLD, color=T_PRI),
+                ft.Row([], expand=True),
+                export_btn,
             ]),
             ft.Divider(height=1, color=BORDER),
             controls_row,
+            sort_row,
             status_txt,
             table_area,
         ],
