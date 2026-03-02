@@ -152,61 +152,13 @@ def _main_view_impl(page: ft.Page) -> None:
         )
         return
 
-    # ── DB onboarding (DB_MISSING — non-fatal) ─────────────────────────────────
+    # ── DB onboarding (DB_MISSING — auto-create and continue) ──────────────────
     if ctx.db_state == "DB_MISSING":
-        status_txt = ft.Text("", size=12, color=RED)
-
-        def _do_create(_e=None) -> None:
-            result = create_db(ctx.db_path)
-            if result.success:
-                page.clean()
-                _main_view_impl(page)
-            else:
-                status_txt.value = result.error_message or "Failed to create database."
-                page.update()
-
-        def _pick_db(_e=None) -> None:
-            def _open_dialog() -> None:
-                import tkinter as tk
-                from tkinter import filedialog
-
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                path = filedialog.askopenfilename(
-                    title="Select existing ledger.db",
-                    filetypes=[("SQLite database", "*.db"), ("All files", "*.*")],
-                )
-                root.destroy()
-                if path:
-                    set_db_path(path)
-                    page.clean()
-                    _main_view_impl(page)
-                    page.update()
-
-            threading.Thread(target=_open_dialog, daemon=True).start()
-
-        page.add(
-            ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text("No database found.", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
-                        ft.Text(f"Expected: {ctx.db_path}", size=12, color=T_MUT),
-                        ft.Row(
-                            [
-                                ft.ElevatedButton("Create DB", on_click=_do_create, bgcolor=BLUE, color=T_PRI),
-                                ft.OutlinedButton("Select DB…", on_click=_pick_db),
-                            ],
-                            spacing=12,
-                        ),
-                        status_txt,
-                    ],
-                    spacing=16,
-                ),
-                padding=48,
-            )
-        )
-        return
+        create_db(ctx.db_path)
+        ctx = create_app_context()
+        if ctx.error or ctx.db_state != "OK":
+            page.add(ft.Text(ctx.error or "Failed to create database.", color=RED, size=14))
+            return
 
     db_path = ctx.db_path
     _price_provider = ctx.price_provider
