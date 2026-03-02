@@ -9,6 +9,7 @@ Public API:
     get_dashboard_snapshot(db_path, price_provider, fiat) -> DashboardSnapshotDTO
     add_trade(request, db_path) -> AddTradeResultDTO
     get_ledger_rows(db_path) -> list
+    get_asset_detail(db_path, asset, price_provider, fiat) -> AssetDetailDTO
     get_health_report(db_path) -> TableReport
     get_positions_table_report(db_path) -> TableReport
     get_time_series_report(db_path, kind, bucket, fiat) -> TimeSeriesReport
@@ -63,6 +64,33 @@ class PositionDTO:
     value: Optional[Decimal] = None        # quantity * spot_price
     unrealized_pnl: Optional[Decimal] = None
     roi_total: Optional[Decimal] = None    # unrealized_pnl / cost_basis (fraction)
+
+
+@dataclass
+class VenuePositionDTO:
+    """WAC position for a single asset restricted to one venue."""
+
+    venue: str
+    quantity: Decimal
+    wac: Decimal
+    cost_basis: Decimal
+    realized_pnl: Decimal
+    roi_realized: Optional[Decimal] = None  # realized_pnl / cost_basis * 100
+    # Populated by price enrichment when price_provider is supplied:
+    spot_price: Optional[Decimal] = None
+    value: Optional[Decimal] = None        # quantity * spot_price
+    unrealized_pnl: Optional[Decimal] = None
+    roi_total: Optional[Decimal] = None    # unrealized_pnl / cost_basis (fraction)
+
+
+@dataclass
+class AssetDetailDTO:
+    """Full detail bundle for one asset, returned by get_asset_detail()."""
+
+    asset: str
+    position: PositionDTO              # aggregated position across all venues
+    venue_positions: List[VenuePositionDTO]  # per-venue breakdown, sorted by venue name
+    rows: List[RawRow]                 # raw ledger rows where row.asset == asset
 
 
 @dataclass
@@ -583,6 +611,120 @@ def get_positions_full(
                     p.roi_total = p.unrealized_pnl / p.cost_basis
 
     return positions
+
+
+def get_asset_detail(
+    db_path: str,
+    asset: str,
+    price_provider=None,
+    fiat: str = "CZK",
+) -> AssetDetailDTO:
+    """Return a full detail bundle for a single asset.
+
+    Includes:
+    - Aggregated WAC position (same compute path as get_positions_full).
+    - Per-venue position breakdown, computed by reusing compute_positions()
+      on venue-filtered subsets of all rows — no WAC logic is duplicated.
+    - Raw ledger rows where row.asset == asset (for transaction history).
+
+    WAC computation always uses _FIAT_DEFAULT (EUR, CZK) to stay consistent
+    with the rest of the facade.  The fiat parameter controls only the price
+    query currency.
+
+    When price_provider is None, spot_price / value / unrealized_pnl /
+    roi_total remain None on all DTOs.
+
+    If the asset is not found in the ledger, returns an AssetDetailDTO with a
+    zero-filled PositionDTO and empty venue_positions / rows lists.
+    """
+    asset_uc = asset.upper()
+    fiat_uc = fiat.upper()
+
+    store = LedgerStore(db_path)
+    try:
+        all_rows = store.timeline()
+        asset_rows = store.timeline_filtered(asset=asset_uc)
+    finally:
+        store.close()
+
+    # ── 1) Aggregated position (reuse canonical compute path) ─────────────────
+    all_positions = compute_positions(all_rows, _FIAT_DEFAULT)
+    agg = next((p for p in all_positions if p.asset == asset_uc), None)
+
+    if agg is None:
+        position = PositionDTO(
+            asset=asset_uc, quantity=_ZERO, wac=_ZERO,
+            cost_basis=_ZERO, realized_pnl=_ZERO,
+        )
+        return AssetDetailDTO(
+            asset=asset_uc, position=position, venue_positions=[], rows=asset_rows,
+        )
+
+    roi_real = (
+        (agg.realized_pnl / agg.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+        if agg.cost_basis != _ZERO
+        else None
+    )
+    position = PositionDTO(
+        asset=agg.asset,
+        quantity=agg.quantity,
+        wac=agg.wac,
+        cost_basis=agg.cost_basis,
+        realized_pnl=agg.realized_pnl,
+        roi_realized=roi_real,
+    )
+
+    # ── 2) Venue breakdown ────────────────────────────────────────────────────
+    # Discover venues from asset-only rows (only venues where this asset appears).
+    # For each venue, filter ALL rows by venue — this ensures fiat quote legs
+    # (same trade_id, same venue) are included so WAC is computed correctly.
+    venues = sorted({r.venue for r in asset_rows})
+    venue_positions: List[VenuePositionDTO] = []
+
+    for venue in venues:
+        venue_rows = [r for r in all_rows if r.venue == venue]
+        vp_list = compute_positions(venue_rows, _FIAT_DEFAULT)
+        vp = next((p for p in vp_list if p.asset == asset_uc), None)
+        if vp is None:
+            continue
+        vp_roi_real = (
+            (vp.realized_pnl / vp.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+            if vp.cost_basis != _ZERO
+            else None
+        )
+        venue_positions.append(VenuePositionDTO(
+            venue=venue,
+            quantity=vp.quantity,
+            wac=vp.wac,
+            cost_basis=vp.cost_basis,
+            realized_pnl=vp.realized_pnl,
+            roi_realized=vp_roi_real,
+        ))
+
+    # ── 3) Price enrichment ───────────────────────────────────────────────────
+    if price_provider is not None:
+        prices = price_provider.get_prices([asset_uc], fiat_uc)
+        spot = prices.get(asset_uc)
+        position.spot_price = spot
+        if spot is not None:
+            position.value = position.quantity * spot
+            if position.cost_basis > _ZERO:
+                position.unrealized_pnl = position.value - position.cost_basis
+                position.roi_total = position.unrealized_pnl / position.cost_basis
+        for vp in venue_positions:
+            vp.spot_price = spot
+            if spot is not None:
+                vp.value = vp.quantity * spot
+                if vp.cost_basis > _ZERO:
+                    vp.unrealized_pnl = vp.value - vp.cost_basis
+                    vp.roi_total = vp.unrealized_pnl / vp.cost_basis
+
+    return AssetDetailDTO(
+        asset=asset_uc,
+        position=position,
+        venue_positions=venue_positions,
+        rows=asset_rows,
+    )
 
 
 # ── Time-series reports ────────────────────────────────────────────────────────

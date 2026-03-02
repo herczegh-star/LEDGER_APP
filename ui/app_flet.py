@@ -286,7 +286,16 @@ def _main_view_impl(page: ft.Page) -> None:
             bc = GREEN if (unr is not None and unr >= 0) else RED if (unr is not None) else BORDER
 
             def on_detail(e, a=p.asset) -> None:
-                page.show_dialog(ft.SnackBar(ft.Text(f"Detail: {a} (TODO)"), duration=2000))
+                from ui.modules.asset_detail_view import build_asset_detail_view
+                _content.content = build_asset_detail_view(
+                    page=page,
+                    db_path=db_path,
+                    price_provider=_price_provider,
+                    fiat=_price_fiat,
+                    asset=a,
+                    on_back=lambda: set_view(0),
+                )
+                page.update()
 
             def stat(label: str, value: str) -> ft.Column:
                 return ft.Column(
