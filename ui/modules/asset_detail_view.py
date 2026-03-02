@@ -112,7 +112,7 @@ def build_asset_detail_view(
                 stat("Cost Basis", _czk(pos.cost_basis)),
                 stat("Spot Price", _czk(pos.spot_price)),
                 stat("Value",      _czk(pos.value)),
-                stat("Unr. PnL",   _czk(pos.unrealized_pnl, sign=True),
+                stat("PnL",        _czk(pos.unrealized_pnl, sign=True),
                      color=_color(pos.unrealized_pnl)),
                 stat("ROI",        _pct(pos.roi_total),
                      color=_color(pos.roi_total)),
@@ -132,32 +132,36 @@ def build_asset_detail_view(
         ft.DataColumn(ft.Text("Quantity",   color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("Avg Entry",  color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("Cost Basis", color=T_MUT, size=11), numeric=True),
-        ft.DataColumn(ft.Text("Spot",       color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("Value",      color=T_MUT, size=11), numeric=True),
-        ft.DataColumn(ft.Text("Unr. PnL",   color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("PnL",        color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("ROI",        color=T_MUT, size=11), numeric=True),
     ]
 
     def _cell(text: str, color: str = T_PRI) -> ft.DataCell:
         return ft.DataCell(ft.Text(text, size=11, color=color))
 
+    def _ncell(text: str, color: str = T_PRI) -> ft.DataCell:
+        """Right-aligned numeric cell."""
+        return ft.DataCell(
+            ft.Text(text, size=11, color=color, text_align=ft.TextAlign.RIGHT)
+        )
+
     venue_data_rows = []
     for vp in detail.venue_positions:
         venue_data_rows.append(ft.DataRow(cells=[
             _cell(vp.venue),
-            _cell(_amt(vp.quantity, detail.asset)),
-            _cell(_czk(vp.wac)),
-            _cell(_czk(vp.cost_basis)),
-            _cell(_czk(vp.spot_price)),
-            _cell(_czk(vp.value)),
-            _cell(_czk(vp.unrealized_pnl, sign=True), color=_color(vp.unrealized_pnl)),
-            _cell(_pct(vp.roi_total),                  color=_color(vp.roi_total)),
+            _ncell(_amt(vp.quantity, detail.asset)),
+            _ncell(_czk(vp.wac)),
+            _ncell(_czk(vp.cost_basis)),
+            _ncell(_czk(vp.value)),
+            _ncell(_czk(vp.unrealized_pnl, sign=True), color=_color(vp.unrealized_pnl)),
+            _ncell(_pct(vp.roi_total),                  color=_color(vp.roi_total)),
         ]))
 
     if not venue_data_rows:
         venue_data_rows = [ft.DataRow(cells=[
             _cell("No venue data", color=T_MUT),
-            *[ft.DataCell(ft.Text("")) for _ in range(7)],
+            *[ft.DataCell(ft.Text("")) for _ in range(6)],
         ])]
 
     venue_table = ft.Container(
