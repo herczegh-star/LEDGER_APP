@@ -109,7 +109,7 @@ def build_asset_detail_view(
             [
                 stat("Quantity",   _amt(pos.quantity, detail.asset)),
                 stat("Avg Entry",  _czk(pos.wac)),
-                stat("Cost Basis", _czk(pos.cost_basis)),
+                stat("Net Invested", _czk(pos.cost_basis)),
                 stat("Spot Price", _czk(pos.spot_price)),
                 stat("Value",      _czk(pos.value)),
                 stat("PnL",        _czk(pos.unrealized_pnl, sign=True),
@@ -131,7 +131,7 @@ def build_asset_detail_view(
         ft.DataColumn(ft.Text("Venue",      color=T_MUT, size=11)),
         ft.DataColumn(ft.Text("Quantity",   color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("Avg Entry",  color=T_MUT, size=11), numeric=True),
-        ft.DataColumn(ft.Text("Cost Basis", color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("Net Invested", color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("Value",      color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("PnL",        color=T_MUT, size=11), numeric=True),
         ft.DataColumn(ft.Text("ROI",        color=T_MUT, size=11), numeric=True),

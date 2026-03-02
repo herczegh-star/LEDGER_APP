@@ -352,7 +352,7 @@ def _main_view_impl(page: ft.Page) -> None:
                             [
                                 stat("Amount", _amt(p.quantity, p.asset)),
                                 stat("Avg Buy", _czk(p.wac)),
-                                stat("Cost Basis", _czk(p.cost_basis)),
+                                stat("Net Invested", _czk(p.cost_basis)),
                                 stat("Spot Price", _czk(p.spot_price)),
                                 stat("Value", _czk(p.value)),
                                 stat("ROI (Realized)", _pct_pts(roi_real)),
