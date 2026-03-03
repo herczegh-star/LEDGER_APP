@@ -79,15 +79,11 @@ def _color(v: Optional[Decimal]) -> str:
 
 
 # ── Sort logic ─────────────────────────────────────────────────────────────────
-SORTS = [
-    ("ROI Total ↓", "roi_desc"),
-    ("ROI Total ↑", "roi_asc"),
-    ("PnL ↓", "pnl_desc"),
-    ("PnL ↑", "pnl_asc"),
-    ("Value ↓", "val_desc"),
-    ("Value ↑", "val_asc"),
-    ("A–Z", "az"),
-    ("Z–A", "za"),
+_SORT_FIELDS = [
+    ("roi",  "ROI Total"),
+    ("pnl",  "PnL"),
+    ("val",  "Value"),
+    ("name", "Name"),
 ]
 
 
@@ -96,14 +92,14 @@ def _sort(items: list, key: str) -> list:
     _p = lambda p: p.unrealized_pnl or Decimal("0")
     _v = lambda p: p.value or Decimal("0")
     cfg = {
-        "roi_desc": (_r, True),
-        "roi_asc": (_r, False),
-        "pnl_desc": (_p, True),
-        "pnl_asc": (_p, False),
-        "val_desc": (_v, True),
-        "val_asc": (_v, False),
-        "az": (lambda p: p.asset, False),
-        "za": (lambda p: p.asset, True),
+        "roi_desc":  (_r, True),
+        "roi_asc":   (_r, False),
+        "pnl_desc":  (_p, True),
+        "pnl_asc":   (_p, False),
+        "val_desc":  (_v, True),
+        "val_asc":   (_v, False),
+        "name_asc":  (lambda p: p.asset, False),
+        "name_desc": (lambda p: p.asset, True),
     }
     fn, rev = cfg.get(key, (lambda p: p.asset, False))
     return sorted(items, key=fn, reverse=rev)
@@ -166,7 +162,7 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── State ──────────────────────────────────────────────────────────────────
     raw: list = []
-    state = {"sort": "roi_desc"}
+    state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
     w_val = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
@@ -204,11 +200,15 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Sort pills ─────────────────────────────────────────────────────────────
     def build_pills() -> None:
-        def make_pill(label: str, key: str) -> ft.Container:
-            active = state["sort"] == key
+        def make_pill(field: str, label: str) -> ft.Container:
+            active = state["sort_field"] == field
 
-            def on_click(e, k=key) -> None:
-                state["sort"] = k
+            def on_click(e, f=field) -> None:
+                if state["sort_field"] == f:
+                    state["sort_asc"] = not state["sort_asc"]
+                else:
+                    state["sort_field"] = f
+                    state["sort_asc"] = False
                 build_pills()
                 build_cards()
                 page.update()
@@ -220,14 +220,14 @@ def _main_view_impl(page: ft.Page) -> None:
                     color=T_PRI if active else T_MUT,
                     weight=ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL,
                 ),
-                bgcolor=BLUE if active else "#162030",   # less contrast than BORDER
+                bgcolor=BLUE if active else "#162030",
                 border_radius=20,
                 padding=ft.padding.symmetric(6, 14),
                 on_click=on_click,
                 ink=True,
             )
 
-        pills_row.controls = [make_pill(l, k) for l, k in SORTS]
+        pills_row.controls = [make_pill(f, l) for f, l in _SORT_FIELDS]
 
     # ── Cards ──────────────────────────────────────────────────────────────────
     def build_cards() -> None:
@@ -322,7 +322,9 @@ def _main_view_impl(page: ft.Page) -> None:
             )
 
         if raw:
-            cards_col.controls = [make_card(p) for p in _sort(raw, state["sort"])]
+            cards_col.controls = [make_card(p) for p in _sort(
+                raw, f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}"
+            )]
         else:
             cards_col.controls = [
                 ft.Container(
