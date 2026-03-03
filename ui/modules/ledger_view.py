@@ -257,6 +257,14 @@ def build_ledger_view(
 
     # ── Render: apply filter/sort and rebuild table ───────────────────────────
     def _render() -> None:
+        # Precompute set of already-reversed trade IDs from loaded rows.
+        # A trade is reversed if a REVERSAL row exists with note "REVERSAL of {id}...".
+        reversed_ids: set = set()
+        for r in _rows_holder:
+            if r.type == "REVERSAL" and r.note and r.note.startswith("REVERSAL of "):
+                orig_id = r.note[len("REVERSAL of "):].split(";")[0].strip()
+                reversed_ids.add(orig_id)
+
         visible = filter_and_sort_ledger(
             _rows_holder,
             search=tf_search.value or "",
@@ -301,8 +309,8 @@ def build_ledger_view(
             ts_str      = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
             note_display = (row.note or "")[:40] + ("…" if len(row.note or "") > 40 else "")
 
-            # Reverse button — hidden for REVERSAL rows (no point reversing a reversal)
-            if row.type != "REVERSAL" and row.id:
+            # Reverse button — hidden for REVERSAL rows and already-reversed trades
+            if row.type != "REVERSAL" and row.id and row.id not in reversed_ids:
                 tid = row.id  # capture for closure
 
                 def _make_reverse_cb(t: str) -> Callable:
