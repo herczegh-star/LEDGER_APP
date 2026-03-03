@@ -251,22 +251,16 @@ def test_reverse_trade_cancels_cashflow():
         os.unlink(db_path)
 
 
-def test_reverse_trade_dedup_safe_second_call():
-    """Calling reverse_trade twice with same input at the same second
-    creates identical reversal rows; the second call is skipped by dedup
-    (same fingerprint). A subsequent check confirms the ledger has the
-    right row count.
+def test_reverse_trade_second_call_raises():
+    """Calling reverse_trade twice on the same trade_id must raise ValueError.
+    Each trade can only be reversed once.
     """
     trade_rows = _make_trade_rows()
     db_path, tid = _store_with_rows(trade_rows)
     try:
-        rev1 = reverse_trade(db_path, tid)
-        # If both calls happen at the same second AND use same new_trade_id,
-        # the fingerprints would match → dedup. Since new_trade_id contains
-        # a fresh UUID suffix each call, a second call at a different time
-        # simply adds another reversal group. Either way: no exception.
-        # We just confirm no exception is raised:
         reverse_trade(db_path, tid)
+        with pytest.raises(ValueError, match="already been reversed"):
+            reverse_trade(db_path, tid)
     finally:
         os.unlink(db_path)
 

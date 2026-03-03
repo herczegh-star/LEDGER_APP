@@ -111,6 +111,15 @@ def reverse_trade(db_path: str, trade_id: str) -> List[RawRow]:
                 f"No rows found for trade_id '{trade_id}'. "
                 "Check the ID and try again."
             )
+        existing = store.conn.execute(
+            "SELECT COUNT(*) FROM ledger WHERE id LIKE ?",
+            (f"REV_{trade_id}_%",),
+        ).fetchone()[0]
+        if existing > 0:
+            raise ValueError(
+                f"Trade '{trade_id}' has already been reversed. "
+                "Each trade can only be reversed once."
+            )
         reversal_rows = build_reversal_rows(original_rows)
         store.import_rows(reversal_rows)
         return reversal_rows
