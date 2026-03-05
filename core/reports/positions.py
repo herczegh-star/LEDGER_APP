@@ -29,7 +29,7 @@ _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 _ROI_PLACES = Decimal("0.01")
 
 # Row types that carry investment position changes
-_INVESTMENT_TYPES = frozenset({"BUY", "SELL", "REVERSAL"})
+_INVESTMENT_TYPES = frozenset({"BUY", "SELL", "REVERSAL", "STAKING"})
 
 
 @dataclass

@@ -7,7 +7,7 @@ import hashlib
 import uuid
 
 
-VALID_TYPES = {"BUY", "SELL", "TRANSFER", "FEE", "REVERSAL"}
+VALID_TYPES = {"BUY", "SELL", "TRANSFER", "FEE", "REVERSAL", "STAKING"}
 
 
 @dataclass

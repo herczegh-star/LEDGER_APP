@@ -44,7 +44,9 @@ BLUE = "#1d4ed8"
 def _czk(v: Optional[Decimal], sign: bool = False) -> str:
     if v is None:
         return "—"
-    n = f"{abs(v):,.0f}".replace(",", "\u00a0")  # narrow-space thousands separator
+    a = abs(v)
+    places = 0 if a >= 1000 else (2 if a >= 1 else 4)
+    n = f"{a:,.{places}f}".replace(",", "\u00a0")  # narrow-space thousands separator
     if v < 0:
         return f"-{n} CZK"
     return f"+{n} CZK" if sign else f"{n} CZK"

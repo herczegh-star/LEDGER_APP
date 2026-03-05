@@ -19,7 +19,7 @@ from io_module.raw_loader import _normalize_row  # shared parse + normalise logi
 # ── Column requirements ────────────────────────────────────────────────────────
 
 _REQUIRED_COLS: FrozenSet[str] = frozenset(
-    {"timestamp", "type", "asset", "amount", "currency", "venue"}
+    {"id", "timestamp", "type", "asset", "amount", "currency", "venue"}
 )
 
 
