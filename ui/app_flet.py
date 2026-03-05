@@ -165,6 +165,8 @@ def _main_view_impl(page: ft.Page) -> None:
     # ── State ──────────────────────────────────────────────────────────────────
     raw: list = []
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
+    snap_holder: list = [None]   # last DashboardSnapshotDTO
+    venue_filter: list = [None]  # active venue name, or None = all venues
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
     w_val = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
@@ -172,8 +174,31 @@ def _main_view_impl(page: ft.Page) -> None:
     w_roi = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
 
     # Dynamic regions
-    pills_row = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
-    cards_col = ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)  # CHANGED (was 10)
+    pills_row   = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
+    cards_col   = ft.Column(spacing=16)   # asset position cards
+    venue_col   = ft.Column(spacing=8)    # venue breakdown section
+
+    # Venue filter indicator bar (hidden when no filter active)
+    _filter_label = ft.Text("", size=12, color=T_PRI)
+    filter_bar = ft.Container(
+        visible=False,
+        content=ft.Row(
+            [
+                ft.Text("Venue filter:", size=11, color=T_MUT),
+                _filter_label,
+                ft.TextButton(
+                    "× clear",
+                    on_click=lambda e: _clear_venue_filter(),
+                    style=ft.ButtonStyle(color=T_MUT, padding=ft.padding.symmetric(0, 4)),
+                ),
+            ],
+            spacing=8,
+            tight=True,
+        ),
+        bgcolor="#162030",
+        border_radius=6,
+        padding=ft.padding.symmetric(4, 12),
+    )
 
     # ── KPI update ─────────────────────────────────────────────────────────────
     def update_kpis() -> None:
@@ -323,9 +348,17 @@ def _main_view_impl(page: ft.Page) -> None:
                 shadow=glow,
             )
 
-        if raw:
+        # Use venue-filtered positions when a venue filter is active
+        if venue_filter[0] is not None and snap_holder[0] is not None:
+            vdto = snap_holder[0].by_venue.get(venue_filter[0])
+            positions_to_show = vdto.positions if vdto else []
+        else:
+            positions_to_show = raw
+
+        if positions_to_show:
             cards_col.controls = [make_card(p) for p in _sort(
-                raw, f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}"
+                positions_to_show,
+                f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}",
             )]
         else:
             cards_col.controls = [
@@ -337,15 +370,53 @@ def _main_view_impl(page: ft.Page) -> None:
 
         _blog(f"build_cards: raw={len(raw)} cards={len(cards_col.controls)}")
 
+    # ── Venue filter helpers ────────────────────────────────────────────────────
+    def _update_filter_bar() -> None:
+        if venue_filter[0]:
+            filter_bar.visible = True
+            _filter_label.value = venue_filter[0].upper()
+        else:
+            filter_bar.visible = False
+            _filter_label.value = ""
+
+    def _rebuild_venue_col() -> None:
+        if snap_holder[0] is None:
+            return
+        from ui.modules.venue_breakdown_widget import build_venue_breakdown
+        venue_section = build_venue_breakdown(
+            snap_holder[0].by_venue,
+            on_venue_click=_on_venue_click,
+            active_venue=venue_filter[0],
+        )
+        venue_col.controls = venue_section.controls
+
+    def _on_venue_click(v: str) -> None:
+        venue_filter[0] = None if venue_filter[0] == v else v
+        _update_filter_bar()
+        build_cards()
+        _rebuild_venue_col()
+        page.update()
+
+    def _clear_venue_filter() -> None:
+        venue_filter[0] = None
+        _update_filter_bar()
+        build_cards()
+        _rebuild_venue_col()
+        page.update()
+
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
         nonlocal raw
         snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+        snap_holder[0] = snap
         raw = snap.positions
+        venue_filter[0] = None   # reset filter on full data refresh
 
         update_kpis()
         build_pills()
         build_cards()
+        _update_filter_bar()
+        _rebuild_venue_col()
         page.update()
 
     # ── Layout helper ──────────────────────────────────────────────────────────
@@ -379,8 +450,15 @@ def _main_view_impl(page: ft.Page) -> None:
                 ),
                 ft.Container(height=16),
                 pills_row,
-                ft.Container(height=12),
-                cards_col,
+                ft.Container(height=8),
+                filter_bar,
+                ft.Container(height=4),
+                ft.Column(
+                    [cards_col, ft.Container(height=24), venue_col],
+                    spacing=0,
+                    scroll=ft.ScrollMode.AUTO,
+                    expand=True,
+                ),
             ],
             spacing=0,
             expand=True,

@@ -94,6 +94,21 @@ class AssetDetailDTO:
 
 
 @dataclass
+class VenueDashboardDTO:
+    """Per-venue portfolio summary for the dashboard venue breakdown."""
+
+    venue: str
+    positions: List[PositionDTO]          # open positions for this venue
+    cost_basis_total: Decimal             # sum of cost_basis across open positions
+    assets_held: int                      # count of positions with quantity > 0
+    invested: Dict[str, Decimal]          # gross fiat outflows for this venue
+    net_flow: Dict[str, Decimal]          # net fiat flow for this venue
+    # Populated when price_provider is supplied:
+    value_total: Optional[Decimal] = None
+    unrealized_pnl: Optional[Decimal] = None
+
+
+@dataclass
 class DashboardSnapshotDTO:
     """Full dashboard payload returned by get_dashboard_snapshot()."""
 
@@ -107,6 +122,7 @@ class DashboardSnapshotDTO:
     total_value: Optional[Decimal] = None
     unrealized_pnl: Optional[Decimal] = None
     roi_total: Optional[Decimal] = None    # fraction: unrealized / total_cost
+    by_venue: Dict[str, VenueDashboardDTO] = field(default_factory=dict)
 
 
 @dataclass
@@ -204,17 +220,68 @@ def get_dashboard_snapshot(
         ))
 
     # ── Live-price enrichment (failure-tolerant) ──────────────────────────────
+    prices_map: Dict[str, Optional[Decimal]] = {}
     if price_provider is not None and positions:
         assets = [p.asset for p in positions]
-        prices = price_provider.get_prices(assets, fiat_uc)
+        prices_map = price_provider.get_prices(assets, fiat_uc)
         for p in positions:
-            spot = prices.get(p.asset)
+            spot = prices_map.get(p.asset)
             p.spot_price = spot
             if spot is not None:
                 p.value = p.quantity * spot
                 if p.cost_basis > _ZERO:
                     p.unrealized_pnl = p.value - p.cost_basis
                     p.roi_total = p.unrealized_pnl / p.cost_basis
+
+    # ── Per-venue breakdown ───────────────────────────────────────────────────
+    venues = sorted({r.venue for r in rows})
+    by_venue: Dict[str, VenueDashboardDTO] = {}
+    for venue in venues:
+        venue_rows = [r for r in rows if r.venue == venue]
+        venue_raw = compute_positions(venue_rows, _FIAT_DEFAULT)
+        venue_snap = get_portfolio_snapshot(venue_rows)
+
+        venue_positions: List[PositionDTO] = []
+        for pos in venue_raw:
+            if pos.quantity == _ZERO:
+                continue
+            roi_real = (
+                (pos.realized_pnl / pos.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
+                if pos.cost_basis != _ZERO else None
+            )
+            vp = PositionDTO(
+                asset=pos.asset,
+                quantity=pos.quantity,
+                wac=pos.wac,
+                cost_basis=pos.cost_basis,
+                realized_pnl=pos.realized_pnl,
+                roi_realized=roi_real,
+            )
+            if prices_map:
+                spot = prices_map.get(pos.asset)
+                vp.spot_price = spot
+                if spot is not None:
+                    vp.value = vp.quantity * spot
+                    if vp.cost_basis > _ZERO:
+                        vp.unrealized_pnl = vp.value - vp.cost_basis
+                        vp.roi_total = vp.unrealized_pnl / vp.cost_basis
+            venue_positions.append(vp)
+
+        cost_basis_total = sum((p.cost_basis for p in venue_positions), _ZERO)
+        venue_vals = [p.value for p in venue_positions if p.value is not None]
+        venue_value = sum(venue_vals, _ZERO) if venue_vals else None
+        venue_unr = (venue_value - cost_basis_total) if venue_value is not None else None
+
+        by_venue[venue] = VenueDashboardDTO(
+            venue=venue,
+            positions=venue_positions,
+            cost_basis_total=cost_basis_total,
+            assets_held=len(venue_positions),
+            invested=venue_snap.invested,
+            net_flow=venue_snap.net_flow,
+            value_total=venue_value,
+            unrealized_pnl=venue_unr,
+        )
 
     # ── Portfolio-level aggregates ────────────────────────────────────────────
     snap = get_portfolio_snapshot(rows)
@@ -241,6 +308,7 @@ def get_dashboard_snapshot(
         total_value=total_value,
         unrealized_pnl=unrealized,
         roi_total=roi_total,
+        by_venue=by_venue,
     )
 
 

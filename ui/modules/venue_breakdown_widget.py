@@ -1,0 +1,169 @@
+"""Venue breakdown widget — shows a per-venue portfolio summary card for the dashboard.
+
+Public API:
+    build_venue_breakdown(by_venue, on_venue_click=None, active_venue=None) -> ft.Column
+
+    on_venue_click(venue_name: str) — called when user clicks a venue card.
+    active_venue — currently selected venue name (None = all venues).
+    Clicking the active venue again clears the filter (handled by caller).
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Callable, Optional
+
+import flet as ft
+
+# ── Color palette (matches app_flet.py) ─────────────────────────────────────
+BG_CARD    = "#0f1621"
+BG_ACTIVE  = "#0d1e30"   # slightly lighter tint for the active venue card
+BORDER     = "#1e293b"
+BORDER_ACT = "#1d4ed8"   # blue border when venue is active
+T_PRI      = "#e2e8f0"
+T_MUT      = "#7b8799"
+GREEN      = "#16a34a"
+RED        = "#ef4444"
+BLUE       = "#1d4ed8"
+
+
+def _czk(v: Optional[Decimal], sign: bool = False) -> str:
+    if v is None:
+        return "—"
+    a = abs(v)
+    places = 0 if a >= 1000 else (2 if a >= 1 else 4)
+    n = f"{a:,.{places}f}".replace(",", "\u00a0")
+    if v < 0:
+        return f"-{n} CZK"
+    return f"+{n} CZK" if sign else f"{n} CZK"
+
+
+def _color(v: Optional[Decimal]) -> str:
+    if v is None:
+        return T_MUT
+    return GREEN if v >= 0 else RED
+
+
+def _stat(label: str, value: str, value_color: str = T_PRI) -> ft.Column:
+    return ft.Column(
+        [
+            ft.Text(label, size=10, color=T_MUT),
+            ft.Text(value, size=12, color=value_color),
+        ],
+        spacing=2,
+        tight=True,
+    )
+
+
+def build_venue_breakdown(
+    by_venue: dict,
+    on_venue_click: Optional[Callable[[str], None]] = None,
+    active_venue: Optional[str] = None,
+) -> ft.Column:
+    """Build the venue breakdown section.
+
+    Args:
+        by_venue:        dict[str, VenueDashboardDTO] from DashboardSnapshotDTO.by_venue.
+        on_venue_click:  Called with venue name when user clicks a card.
+                         Caller handles toggle logic (active → None, or set new active).
+        active_venue:    Currently selected venue name for highlight.
+
+    Returns:
+        ft.Column — empty Column when by_venue is empty.
+    """
+    if not by_venue:
+        return ft.Column([])
+
+    venue_cards = []
+    for venue_name, vdto in sorted(by_venue.items()):
+        if vdto.assets_held == 0:
+            continue
+
+        is_active = (venue_name == active_venue)
+        unr = vdto.unrealized_pnl
+
+        # Asset ticker chips
+        asset_chips = ft.Row(
+            [
+                ft.Container(
+                    content=ft.Text(p.asset, size=10, color=T_MUT),
+                    bgcolor="#162030",
+                    border_radius=4,
+                    padding=ft.padding.symmetric(2, 6),
+                )
+                for p in vdto.positions
+            ],
+            spacing=4,
+            wrap=True,
+        )
+
+        def _click(e, v=venue_name) -> None:
+            if on_venue_click:
+                on_venue_click(v)
+
+        card = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Text(
+                                        venue_name.upper(),
+                                        size=13,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=T_PRI if not is_active else ft.Colors.WHITE,
+                                    ),
+                                    *(
+                                        [ft.Container(
+                                            content=ft.Text("active", size=9, color=BLUE),
+                                            bgcolor=BLUE + "22",
+                                            border_radius=4,
+                                            padding=ft.padding.symmetric(2, 6),
+                                        )]
+                                        if is_active else []
+                                    ),
+                                ],
+                                spacing=8,
+                                tight=True,
+                            ),
+                            ft.Row(
+                                [
+                                    _stat("Assets", str(vdto.assets_held)),
+                                    _stat("Net Invested", _czk(vdto.cost_basis_total)),
+                                    _stat("Value", _czk(vdto.value_total)),
+                                    _stat(
+                                        "Unrealized PnL",
+                                        _czk(unr, sign=True),
+                                        value_color=_color(unr),
+                                    ),
+                                ],
+                                spacing=28,
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    asset_chips,
+                ],
+                spacing=8,
+            ),
+            bgcolor=BG_ACTIVE if is_active else BG_CARD,
+            border=ft.border.all(1, BORDER_ACT if is_active else BORDER),
+            border_radius=10,
+            padding=14,
+            on_click=_click if on_venue_click else None,
+            ink=True,
+        )
+        venue_cards.append(card)
+
+    if not venue_cards:
+        return ft.Column([])
+
+    return ft.Column(
+        [
+            ft.Row(
+                [ft.Text("Venue Breakdown", size=12, color=T_MUT, weight=ft.FontWeight.W_500)],
+            ),
+            ft.Column(venue_cards, spacing=8),
+        ],
+        spacing=10,
+    )
