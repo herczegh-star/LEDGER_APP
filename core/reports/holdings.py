@@ -46,15 +46,22 @@ def compute_venue_holdings(
     Processing rules:
         BUY / SELL / REVERSAL / STAKING:
             quantity += row.amount  (same sign semantics as WAC engine)
-        TRANSFER:
-            quantity += row.amount  (negative = outflow, positive = inflow)
+        TRANSFER (outflow, amount < 0):
+            source venue: quantity += row.amount  (negative = reduce)
+            if row.note is a plain venue name → destination venue: quantity += abs(row.amount)
+        TRANSFER (inflow, amount > 0):
+            quantity += row.amount  (explicit inflow row, no note needed)
         FEE:
             ignored (fee does not change asset holdings position)
         Fiat assets:
             ignored entirely
 
-    Invariant (when all TRANSFER pairs are present in the ledger):
-        sum(holdings[v][asset] for all v) == compute_positions()[asset].quantity
+    Single-entry TRANSFER convention:
+        One row records the outflow (amount < 0, venue = source, note = destination).
+        compute_venue_holdings() synthesises the matching inflow automatically so
+        the destination venue appears in holdings without a second DB row.
+        A note qualifies as a destination venue when it is non-empty and contains
+        no spaces (i.e. looks like a plain venue identifier, not a sentence).
     """
     if fiat is None:
         fiat = _FIAT_DEFAULT
@@ -64,6 +71,13 @@ def compute_venue_holdings(
     sorted_rows = sorted(rows, key=lambda r: (r.timestamp, r.id or ""))
 
     holdings: Dict[str, Dict[str, Decimal]] = {}
+
+    def _add(venue: str, asset: str, amount: Decimal) -> None:
+        if venue not in holdings:
+            holdings[venue] = {}
+        if asset not in holdings[venue]:
+            holdings[venue][asset] = Decimal("0")
+        holdings[venue][asset] += amount
 
     for row in sorted_rows:
         asset = row.asset.upper()
@@ -76,13 +90,16 @@ def compute_venue_holdings(
         if row.type not in _HOLDING_TYPES:
             continue
 
-        # Ensure nested dict exists
-        if venue not in holdings:
-            holdings[venue] = {}
-        if asset not in holdings[venue]:
-            holdings[venue][asset] = Decimal("0")
-
-        holdings[venue][asset] += row.amount
+        if row.type == "TRANSFER" and row.amount < Decimal("0"):
+            # Outflow from source venue
+            _add(venue, asset, row.amount)
+            # Synthesise inflow to destination when note looks like a venue name
+            note = (row.note or "").strip()
+            if note and " " not in note:
+                dest = note.lower()
+                _add(dest, asset, abs(row.amount))
+        else:
+            _add(venue, asset, row.amount)
 
     # Prune zero-quantity entries (closed / fully-transferred out)
     result: Dict[str, Dict[str, Decimal]] = {}
