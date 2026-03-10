@@ -193,9 +193,22 @@ def build_venue_breakdown(
     return ft.Column(
         [
             ft.Row(
-                [ft.Text("Venue Breakdown", size=12, color=T_MUT, weight=ft.FontWeight.W_500)],
+                [
+                    ft.Container(height=2, bgcolor="#2d3f55", expand=True),
+                    ft.Container(
+                        content=ft.Text("Venue Breakdown", size=12, color=T_MUT, weight=ft.FontWeight.W_500),
+                        padding=ft.padding.symmetric(0, 12),
+                    ),
+                    ft.Container(height=2, bgcolor="#2d3f55", expand=True),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            ft.Column(venue_cards, spacing=8),
+            ft.Container(
+                content=ft.Column(venue_cards, spacing=8),
+                bgcolor="#0a1018",
+                border_radius=12,
+                padding=ft.padding.symmetric(16, 16),
+            ),
         ],
-        spacing=10,
+        spacing=12,
     )
