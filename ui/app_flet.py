@@ -459,7 +459,7 @@ def _main_view_impl(page: ft.Page) -> None:
     # ── Dashboard view (REAL) ──────────────────────────────────────────────────
     _dashboard_view = ft.Container(
         expand=True,
-        padding=24,
+        padding=ft.padding.only(left=24, right=24, top=24, bottom=0),
         content=ft.Column(
             [
                 ft.Row(
@@ -475,14 +475,13 @@ def _main_view_impl(page: ft.Page) -> None:
                 ft.Container(height=8),
                 filter_bar,
                 ft.Container(height=4),
-                ft.Column(
-                    [cards_col, ft.Container(height=24), venue_col],
-                    spacing=0,
-                    scroll=ft.ScrollMode.AUTO,
-                    expand=True,
-                ),
+                cards_col,
+                ft.Container(height=24),
+                venue_col,
+                ft.Container(height=32),  # bottom breathing room
             ],
             spacing=0,
+            scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
     )
