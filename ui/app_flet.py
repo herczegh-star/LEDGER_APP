@@ -258,7 +258,7 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Cards ──────────────────────────────────────────────────────────────────
     def build_cards() -> None:
-        def make_card(p) -> ft.Container:
+        def make_card(p, physical_qty: Optional[Decimal] = None) -> ft.Container:
             unr = p.unrealized_pnl
             roi_total = p.roi_total      # fraction
             roi_real = p.roi_realized    # % points from core
@@ -283,16 +283,38 @@ def _main_view_impl(page: ft.Page) -> None:
                     tight=True,
                 )
 
-            # Softer, ambient glow (more blur + transparency), not neon outline
             glow = None
             if bc != BORDER:
                 glow = ft.BoxShadow(
                     spread_radius=0,
-                    blur_radius=32,     # CHANGED (was 26)
-                    color=bc + "33",    # CHANGED (was "55")
+                    blur_radius=32,
+                    color=bc + "33",
                     offset=ft.Offset(0, 0),
                     blur_style=ft.BlurStyle.OUTER,
                 )
+
+            # Stat row — insert physical qty when venue filter is active
+            stat_items = [
+                stat("Amount", _amt(p.quantity, p.asset)),
+            ]
+            if physical_qty is not None and venue_filter[0]:
+                stat_items.append(
+                    ft.Column(
+                        [
+                            ft.Text(f"Na {venue_filter[0].upper()}", size=11, color=BLUE),
+                            ft.Text(_amt(physical_qty, p.asset), size=13, color=T_PRI),
+                        ],
+                        spacing=2,
+                        tight=True,
+                    )
+                )
+            stat_items += [
+                stat("Avg Buy", _czk(p.wac)),
+                stat("Net Invested", _czk(p.cost_basis)),
+                stat("Spot Price", _czk(p.spot_price)),
+                stat("Value", _czk(p.value)),
+                stat("ROI (Realized)", _pct_pts(roi_real)),
+            ]
 
             return ft.Container(
                 content=ft.Column(
@@ -326,40 +348,40 @@ def _main_view_impl(page: ft.Page) -> None:
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
-                        ft.Divider(height=1, color="#1f2a3a"),  # CHANGED (was "#243244")
-                        ft.Row(
-                            [
-                                stat("Amount", _amt(p.quantity, p.asset)),
-                                stat("Avg Buy", _czk(p.wac)),
-                                stat("Net Invested", _czk(p.cost_basis)),
-                                stat("Spot Price", _czk(p.spot_price)),
-                                stat("Value", _czk(p.value)),
-                                stat("ROI (Realized)", _pct_pts(roi_real)),
-                            ],
-                            spacing=40,
-                        ),
+                        ft.Divider(height=1, color="#1f2a3a"),
+                        ft.Row(stat_items, spacing=40),
                     ],
                     spacing=12,
                 ),
                 bgcolor=BG_CARD,
-                border=ft.border.all(1, "#223046"),      # consistent, less “status-outline”
+                border=ft.border.all(1, "#223046"),
                 border_radius=12,
                 padding=16,
                 shadow=glow,
             )
 
-        # Use venue-filtered positions when a venue filter is active
+        # Determine which positions to show and physical quantities
+        physical_qtys: dict = {}
         if venue_filter[0] is not None and snap_holder[0] is not None:
             vdto = snap_holder[0].by_venue.get(venue_filter[0])
-            positions_to_show = vdto.positions if vdto else []
+            if vdto and vdto.holdings:
+                # Show assets physically held at this venue (TRANSFER-aware)
+                held_assets = {a for a, q in vdto.holdings.items() if q > Decimal("0")}
+                positions_to_show = [p for p in raw if p.asset in held_assets]
+                physical_qtys = {a: q for a, q in vdto.holdings.items() if q > Decimal("0")}
+            else:
+                positions_to_show = vdto.positions if vdto else []
         else:
             positions_to_show = raw
 
         if positions_to_show:
-            cards_col.controls = [make_card(p) for p in _sort(
-                positions_to_show,
-                f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}",
-            )]
+            cards_col.controls = [
+                make_card(p, physical_qty=physical_qtys.get(p.asset))
+                for p in _sort(
+                    positions_to_show,
+                    f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}",
+                )
+            ]
         else:
             cards_col.controls = [
                 ft.Container(
