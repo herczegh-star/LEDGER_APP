@@ -98,9 +98,10 @@ class VenueDashboardDTO:
     """Per-venue portfolio summary for the dashboard venue breakdown."""
 
     venue: str
-    positions: List[PositionDTO]          # open positions for this venue
-    cost_basis_total: Decimal             # sum of cost_basis across open positions
-    assets_held: int                      # count of positions with quantity > 0
+    positions: List[PositionDTO]          # WAC-based open positions (BUY/SELL only)
+    holdings: Dict[str, Decimal]          # physical quantity per asset (incl. TRANSFER)
+    cost_basis_total: Decimal             # sum of cost_basis across WAC positions
+    assets_held: int                      # count of assets with physical quantity > 0
     invested: Dict[str, Decimal]          # gross fiat outflows for this venue
     net_flow: Dict[str, Decimal]          # net fiat flow for this venue
     # Populated when price_provider is supplied:
@@ -233,8 +234,12 @@ def get_dashboard_snapshot(
                     p.unrealized_pnl = p.value - p.cost_basis
                     p.roi_total = p.unrealized_pnl / p.cost_basis
 
+    # ── Physical venue holdings (TRANSFER-aware) ─────────────────────────────
+    from core.reports.holdings import compute_venue_holdings
+    all_holdings = compute_venue_holdings(rows, _FIAT_DEFAULT)
+
     # ── Per-venue breakdown ───────────────────────────────────────────────────
-    venues = sorted({r.venue for r in rows})
+    venues = sorted({r.venue for r in rows} | set(all_holdings.keys()))
     by_venue: Dict[str, VenueDashboardDTO] = {}
     for venue in venues:
         venue_rows = [r for r in rows if r.venue == venue]
@@ -272,11 +277,15 @@ def get_dashboard_snapshot(
         venue_value = sum(venue_vals, _ZERO) if venue_vals else None
         venue_unr = (venue_value - cost_basis_total) if venue_value is not None else None
 
+        venue_holdings = all_holdings.get(venue, {})
+        physical_assets_held = sum(1 for q in venue_holdings.values() if q > _ZERO)
+
         by_venue[venue] = VenueDashboardDTO(
             venue=venue,
             positions=venue_positions,
+            holdings=venue_holdings,
             cost_basis_total=cost_basis_total,
-            assets_held=len(venue_positions),
+            assets_held=physical_assets_held if venue_holdings else len(venue_positions),
             invested=venue_snap.invested,
             net_flow=venue_snap.net_flow,
             value_total=venue_value,

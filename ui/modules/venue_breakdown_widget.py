@@ -6,6 +6,9 @@ Public API:
     on_venue_click(venue_name: str) — called when user clicks a venue card.
     active_venue — currently selected venue name (None = all venues).
     Clicking the active venue again clears the filter (handled by caller).
+
+Asset chips show PHYSICAL quantity from VenueDashboardDTO.holdings (TRANSFER-aware).
+If holdings is empty, falls back to WAC positions list.
 """
 from __future__ import annotations
 
@@ -25,6 +28,8 @@ GREEN      = "#16a34a"
 RED        = "#ef4444"
 BLUE       = "#1d4ed8"
 
+_ZERO = Decimal("0")
+
 
 def _czk(v: Optional[Decimal], sign: bool = False) -> str:
     if v is None:
@@ -41,6 +46,11 @@ def _color(v: Optional[Decimal]) -> str:
     if v is None:
         return T_MUT
     return GREEN if v >= 0 else RED
+
+
+def _fmt_qty(q: Decimal) -> str:
+    """Format asset quantity — strips trailing zeros, max 8 decimal places."""
+    return f"{q:.8f}".rstrip("0").rstrip(".")
 
 
 def _stat(label: str, value: str, value_color: str = T_PRI) -> ft.Column:
@@ -75,15 +85,38 @@ def build_venue_breakdown(
 
     venue_cards = []
     for venue_name, vdto in sorted(by_venue.items()):
-        if vdto.assets_held == 0:
+        if vdto.assets_held == 0 and not vdto.holdings:
             continue
 
         is_active = (venue_name == active_venue)
         unr = vdto.unrealized_pnl
 
-        # Asset ticker chips
-        asset_chips = ft.Row(
-            [
+        # ── Asset chips — use physical holdings when available ────────────────
+        # holdings: {asset: physical_qty}  (TRANSFER-aware)
+        # Falls back to WAC positions list when holdings is empty.
+        if vdto.holdings:
+            chip_items = sorted(
+                ((a, q) for a, q in vdto.holdings.items() if q > _ZERO),
+                key=lambda x: x[0],
+            )
+            chips = [
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Text(asset, size=10, color=T_MUT),
+                            ft.Text(_fmt_qty(qty), size=10, color=T_PRI),
+                        ],
+                        spacing=4,
+                        tight=True,
+                    ),
+                    bgcolor="#162030",
+                    border_radius=4,
+                    padding=ft.padding.symmetric(2, 6),
+                )
+                for asset, qty in chip_items
+            ]
+        else:
+            chips = [
                 ft.Container(
                     content=ft.Text(p.asset, size=10, color=T_MUT),
                     bgcolor="#162030",
@@ -91,10 +124,9 @@ def build_venue_breakdown(
                     padding=ft.padding.symmetric(2, 6),
                 )
                 for p in vdto.positions
-            ],
-            spacing=4,
-            wrap=True,
-        )
+            ]
+
+        asset_chips = ft.Row(chips, spacing=4, wrap=True)
 
         def _click(e, v=venue_name) -> None:
             if on_venue_click:
