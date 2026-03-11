@@ -15,7 +15,9 @@ from typing import Optional
 # ── Paths ──────────────────────────────────────────────────────────────────────
 USER_DATA_DIR = Path.home() / ".ledger_app"
 ICONS_DIR = USER_DATA_DIR / "icons"
+VENUE_ICONS_DIR = USER_DATA_DIR / "venue_icons"
 _BUNDLED_DIR = Path(__file__).parent.parent.parent / "assets" / "icons"
+_BUNDLED_VENUE_DIR = Path(__file__).parent.parent.parent / "assets" / "venue_icons"
 
 # ── Known CoinGecko IDs (skips search API call for common coins) ───────────────
 _KNOWN_IDS: dict[str, str] = {
@@ -45,13 +47,23 @@ _KNOWN_IDS: dict[str, str] = {
 
 
 def setup() -> None:
-    """Create icons dir and migrate bundled icons. Call once at startup."""
+    """Create icon dirs and migrate bundled icons. Call once at startup."""
     ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    VENUE_ICONS_DIR.mkdir(parents=True, exist_ok=True)
     if _BUNDLED_DIR.exists():
         for src in _BUNDLED_DIR.glob("*.png"):
             dst = ICONS_DIR / src.name
             if not dst.exists():
                 dst.write_bytes(src.read_bytes())
+    if _BUNDLED_VENUE_DIR.exists():
+        for src in _BUNDLED_VENUE_DIR.glob("*.png"):
+            dst = VENUE_ICONS_DIR / src.name
+            if not dst.exists():
+                dst.write_bytes(src.read_bytes())
+
+
+def has_venue_icon(venue: str) -> bool:
+    return (VENUE_ICONS_DIR / f"{venue.lower()}.png").exists()
 
 
 def has_icon(asset: str) -> bool:

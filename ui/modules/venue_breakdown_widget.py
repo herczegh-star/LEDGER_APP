@@ -17,6 +17,8 @@ from typing import Callable, Optional
 
 import flet as ft
 
+from core.services import icon_service
+
 # ── Color palette (matches app_flet.py) ─────────────────────────────────────
 BG_CARD    = "#0f1621"
 BG_ACTIVE  = "#0d1e30"   # slightly lighter tint for the active venue card
@@ -139,6 +141,14 @@ def build_venue_breakdown(
                         [
                             ft.Row(
                                 [
+                                    *(
+                                        [ft.Image(
+                                            src=f"venue_icons/{venue_name.lower()}.png",
+                                            width=22, height=22,
+                                            fit=ft.BoxFit.CONTAIN,
+                                        )]
+                                        if icon_service.has_venue_icon(venue_name) else []
+                                    ),
                                     ft.Text(
                                         venue_name.upper(),
                                         size=13,
@@ -156,6 +166,7 @@ def build_venue_breakdown(
                                     ),
                                 ],
                                 spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 tight=True,
                             ),
                             ft.Row(

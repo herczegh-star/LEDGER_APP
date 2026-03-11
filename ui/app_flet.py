@@ -696,7 +696,7 @@ def run_ui() -> None:
     _blog("CHECKPOINT 3 - about to call ft.run(target=main_view)")
     # Serve assets from user data dir so downloaded icons are reachable by Flet
     _assets_dir = str(icon_service.USER_DATA_DIR)
-    # Migrate splash.gif to user data dir if needed
+    # Migrate splash.gif + venue_icons to user data dir if needed
     _splash_src = Path(__file__).parent.parent / "assets" / "splash.gif"
     _splash_dst = icon_service.USER_DATA_DIR / "splash.gif"
     if _splash_src.exists() and not _splash_dst.exists():
