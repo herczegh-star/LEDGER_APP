@@ -615,23 +615,31 @@ def _main_view_impl(page: ft.Page) -> None:
         _dashboard_view.height = h
         page.update()
 
-    page.on_resize = _on_resize
-
     _tick("nav + header widgets built")
 
     # ── Splash + real UI in a Stack — splash hides after price fetch ─────────
-    _w = int(page.window.width)
-    _h = int(page.window.height)
-    _splash = ft.Container(
-        content=ft.Image(src="splash.gif", width=_w, height=_h, fit="fill"),
-        bgcolor=BG,
-        width=_w,
-        height=_h,
-        visible=True,
-    )
+    _sw, _sh = int(page.window.width), int(page.window.height)
+    _splash_img = ft.Image(src="splash.gif", fit=ft.BoxFit.COVER, width=_sw, height=_sh)
+    _splash = ft.Container(content=_splash_img, bgcolor=BG, width=_sw, height=_sh, visible=True)
     _real_ui = ft.Column([_header, _body_row], spacing=0, expand=True)
     _stack = ft.Stack([_real_ui, _splash], expand=True)
     page.add(_stack)
+
+    # Extend resize handler so splash always covers the full window while visible
+    def _on_resize(e=None) -> None:
+        h = int(page.window.height) - _HEADER_H
+        _body_row.height = h
+        _nav_host.height = h
+        _dashboard_view.height = h
+        if _splash.visible:
+            w, wh = int(page.window.width), int(page.window.height)
+            _splash.width = w
+            _splash.height = wh
+            _splash_img.width = w
+            _splash_img.height = wh
+        page.update()
+
+    page.on_resize = _on_resize
     # NOTE: main_view() returns after start() so the asyncio event loop can
     # flush the send queue and deliver the layout to Flutter.
 
