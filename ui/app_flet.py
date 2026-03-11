@@ -659,6 +659,8 @@ def _main_view_impl(page: ft.Page) -> None:
     # NOTE: main_view() returns after start() so the asyncio event loop can
     # flush the send queue and deliver the layout to Flutter.
 
+    _SPLASH_MIN_S = 5.5   # minimum splash display time in seconds
+
     def _load_prices() -> None:
         _t0 = _time.perf_counter()
         _snap = None
@@ -671,6 +673,12 @@ def _main_view_impl(page: ft.Page) -> None:
         except Exception as exc:
             _err = exc
             _blog(f"ERROR in _load_prices: {exc}")
+
+        # Ensure splash plays for at least _SPLASH_MIN_S seconds
+        elapsed = _time.perf_counter() - _t0
+        remaining = _SPLASH_MIN_S - elapsed
+        if remaining > 0:
+            _time.sleep(remaining)
 
         async def _finish_on_ui_thread() -> None:
             nonlocal raw
