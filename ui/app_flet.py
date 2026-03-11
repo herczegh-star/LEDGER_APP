@@ -27,6 +27,8 @@ _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 from core.services.ui_facade import create_app_context, create_db, get_dashboard_snapshot, set_db_path
 
 # ── Color palette (decent / less neon) ──────────────────────────────────────
+_ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
+
 BG = "#0b0f14"
 BG_CARD = "#0f1621"      # darker card
 BG_HDR = "#0d1117"
@@ -301,7 +303,19 @@ def _main_view_impl(page: ft.Page) -> None:
                     [
                         ft.Row(
                             [
-                                ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
+                                ft.Row(
+                                    [
+                                        *(
+                                            [ft.Image(src=f"icons/{p.asset.lower()}.png", width=28, height=28, fit=ft.BoxFit.CONTAIN)]
+                                            if (_ICONS_DIR / f"{p.asset.lower()}.png").exists()
+                                            else []
+                                        ),
+                                        ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
+                                    ],
+                                    spacing=8,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    tight=True,
+                                ),
                                 ft.Row(
                                     [
                                         ft.Text(
