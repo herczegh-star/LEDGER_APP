@@ -191,6 +191,13 @@ def get_dashboard_snapshot(
     Returns:
         DashboardSnapshotDTO with positions and aggregate totals.
     """
+    import time as _time
+    _t_snap = _time.perf_counter()
+
+    def _snap_tick(label: str) -> None:
+        ms = (_time.perf_counter() - _t_snap) * 1000
+        logger.info("SNAP_TIMING +%7.1f ms  %s", ms, label)
+
     fiat_uc = fiat.upper()
 
     svc = LedgerService(db_path)
@@ -198,9 +205,11 @@ def get_dashboard_snapshot(
         rows = svc.timeline()
     finally:
         svc.close()
+    _snap_tick(f"timeline() loaded {len(rows)} rows")
 
     # ── WAC positions ─────────────────────────────────────────────────────────
     raw_positions = compute_positions(rows, _FIAT_DEFAULT)
+    _snap_tick(f"compute_positions() done  {len(raw_positions)} assets")
 
     positions: List[PositionDTO] = []
     for pos in raw_positions:
@@ -224,7 +233,9 @@ def get_dashboard_snapshot(
     prices_map: Dict[str, Optional[Decimal]] = {}
     if price_provider is not None and positions:
         assets = [p.asset for p in positions]
+        _snap_tick(f"price_provider.get_prices() START  assets={assets}")
         prices_map = price_provider.get_prices(assets, fiat_uc)
+        _snap_tick(f"price_provider.get_prices() DONE  got {len(prices_map)}/{len(assets)} prices")
         for p in positions:
             spot = prices_map.get(p.asset)
             p.spot_price = spot
@@ -244,7 +255,7 @@ def get_dashboard_snapshot(
     for venue in venues:
         venue_rows = [r for r in rows if r.venue == venue]
         venue_raw = compute_positions(venue_rows, _FIAT_DEFAULT)
-        venue_snap = get_portfolio_snapshot(venue_rows)
+        venue_snap = get_portfolio_snapshot(venue_rows, precomputed_positions=venue_raw)
 
         venue_positions: List[PositionDTO] = []
         for pos in venue_raw:
@@ -292,8 +303,11 @@ def get_dashboard_snapshot(
             unrealized_pnl=venue_unr,
         )
 
+    _snap_tick(f"per-venue loop done  venues={len(by_venue)}")
+
     # ── Portfolio-level aggregates ────────────────────────────────────────────
-    snap = get_portfolio_snapshot(rows)
+    snap = get_portfolio_snapshot(rows, precomputed_positions=raw_positions)
+    _snap_tick("get_portfolio_snapshot() done")
 
     vals = [p.value for p in positions if p.value is not None]
     total_cost = sum((p.cost_basis for p in positions), _ZERO)

@@ -121,9 +121,15 @@ def main_view(page: ft.Page) -> None:
 
 
 def _main_view_impl(page: ft.Page) -> None:
+    import time as _time
+    _t_impl_start = _time.perf_counter()
     _blog("CHECKPOINT 5 - _main_view_impl entered")
-    ctx = create_app_context()
 
+    def _tick(label: str) -> None:
+        ms = (_time.perf_counter() - _t_impl_start) * 1000
+        _blog(f"TIMING +{ms:7.1f}ms  {label}")
+
+    # ── Page base settings (must precede first page.add) ──────────────────────
     page.title = "LedgerApp 1.0.0"
     page.bgcolor = BG
     page.theme_mode = ft.ThemeMode.DARK
@@ -133,8 +139,13 @@ def _main_view_impl(page: ft.Page) -> None:
     page.window.width = 1200
     page.window.height = 760
 
+    # ── Phase 1: load config + probe DB ───────────────────────────────────────
+    ctx = create_app_context()
+    _tick("create_app_context() done")
+
     # ── Fatal error guard ──────────────────────────────────────────────────────
     if ctx.error:
+        page.controls.clear()
         page.add(
             ft.Container(
                 content=ft.Column(
@@ -148,6 +159,7 @@ def _main_view_impl(page: ft.Page) -> None:
                 padding=40,
             )
         )
+        page.update()
         return
 
     # ── DB onboarding (DB_MISSING — auto-create and continue) ──────────────────
@@ -155,12 +167,16 @@ def _main_view_impl(page: ft.Page) -> None:
         create_db(ctx.db_path)
         ctx = create_app_context()
         if ctx.error or ctx.db_state != "OK":
+            page.controls.clear()
             page.add(ft.Text(ctx.error or "Failed to create database.", color=RED, size=14))
+            page.update()
             return
 
     db_path = ctx.db_path
     _price_provider = ctx.price_provider
     _price_fiat = ctx.fiat
+
+    # ── Phase 2: build interface ───────────────────────────────────────────────
 
     # ── State ──────────────────────────────────────────────────────────────────
     raw: list = []
@@ -355,8 +371,12 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
+        import time as _time
         nonlocal raw
+        _t0 = _time.perf_counter()
         snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+        _t1 = _time.perf_counter()
+        _blog(f"TIMING  refresh: get_dashboard_snapshot() took {(_t1-_t0)*1000:.1f}ms  positions={len(snap.positions)}")
         snap_holder[0] = snap
         raw = snap.positions
 
@@ -407,21 +427,30 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Other modules ──────────────────────────────────────────────────────────
     from ui.modules.reports import build_reports_view as _build_rv
+    _tick("import ui.modules.reports done")
     _reports_view, _run_report = _build_rv(page, db_path)
+    _tick("build_reports_view() done")
 
     from ui.modules.positions_view import build_positions_view as _build_pv
+    _tick("import ui.modules.positions_view done")
     _positions_wac_view, _run_positions = _build_pv(page, db_path, price_provider=_price_provider, fiat=_price_fiat)
+    _tick("build_positions_view() done")
 
     from ui.modules.health_view import build_health_view as _build_hv
+    _tick("import ui.modules.health_view done")
     _health_view, _run_health = _build_hv(page, db_path)
+    _tick("build_health_view() done")
 
     from ui.modules.venue_view import build_venue_view as _build_vv
+    _tick("import ui.modules.venue_view done")
     _venues_view, _run_venues = _build_vv(page, db_path, price_provider=_price_provider, fiat=_price_fiat)
+    _tick("build_venue_view() done")
 
     from ui.modules.add_trade_dialog import open_add_trade_dialog
     from ui.modules.export_dialog import open_export_dialog
     from ui.modules.import_dialog import open_import_dialog
     from ui.modules.reversal_dialog import open_reversal_dialog
+    _tick("import all dialogs done")
 
     _ledger_view = None
     _run_ledger = None
@@ -515,7 +544,9 @@ def _main_view_impl(page: ft.Page) -> None:
             _run_ledger()
 
     from ui.modules.ledger_view import build_ledger_view as _build_lv
+    _tick("import ui.modules.ledger_view done")
     _ledger_view, _run_ledger = _build_lv(page, db_path, on_after_reverse=_refresh_all)
+    _tick("build_ledger_view() done")
 
     def on_add_trade(e) -> None:
         open_add_trade_dialog(page, db_path, _refresh_all)
@@ -586,19 +617,59 @@ def _main_view_impl(page: ft.Page) -> None:
 
     page.on_resize = _on_resize
 
-    page.controls.clear()
-    _blog(f"BODY: adding _header + _body_row(h={_body_row.height})  nav_host in slot[0]={_body_row.controls[0] is _nav_host}")
-    page.add(_header, _body_row)
-    _blog(f"BODY: page.controls={len(page.controls)}  window={page.window.width}x{page.window.height}")
+    _tick("nav + header widgets built")
 
-    # Explicit initial view (NavigationRail does NOT fire on startup)
-    set_view(0)
+    # ── Splash + real UI in a Stack — splash hides after price fetch ─────────
+    _w = int(page.window.width)
+    _h = int(page.window.height)
+    _splash = ft.Container(
+        content=ft.Image(src="splash.gif", width=_w, height=_h, fit="fill"),
+        bgcolor=BG,
+        width=_w,
+        height=_h,
+        visible=True,
+    )
+    _real_ui = ft.Column([_header, _body_row], spacing=0, expand=True)
+    _stack = ft.Stack([_real_ui, _splash], expand=True)
+    page.add(_stack)
+    # NOTE: main_view() returns after start() so the asyncio event loop can
+    # flush the send queue and deliver the layout to Flutter.
+
+    def _load_prices() -> None:
+        _t0 = _time.perf_counter()
+        _snap = None
+        _err = None
+        try:
+            _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+            _blog(f"TIMING  get_dashboard_snapshot() {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
+        except Exception as exc:
+            _err = exc
+            _blog(f"ERROR in _load_prices: {exc}")
+
+        async def _finish_on_ui_thread() -> None:
+            nonlocal raw
+            if _snap is not None:
+                snap_holder[0] = _snap
+                raw = _snap.positions
+                update_kpis()
+                build_pills()
+                build_cards()
+                _content.content = _dashboard_view
+            _splash.visible = False
+            page.update()
+            _tick("dashboard visible — startup complete")
+
+        page.run_task(_finish_on_ui_thread)
+
+    threading.Thread(target=_load_prices, daemon=True).start()
+    _tick("background price-fetch thread started — main_view returning")
 
 
 def run_ui() -> None:
     _blog("CHECKPOINT 2 - run_ui entered")
     _blog("CHECKPOINT 3 - about to call ft.run(target=main_view)")
-    ft.run(main_view)
+    _assets_dir = str(Path(__file__).parent.parent / "assets")
+    ft.run(main_view, assets_dir=_assets_dir)
     _blog("CHECKPOINT 3b - ft.run returned (window closed)")
 
 

@@ -13,12 +13,11 @@ Usage:
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Dict, FrozenSet, Optional, Set
+from typing import Dict, FrozenSet, List, Optional, Set
 
-from core.reports.cashflow import cashflow_report
-from core.reports.netto_invested import netto_invested_report
 from core.reports.positions import compute_positions
 
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
@@ -54,40 +53,47 @@ class PortfolioSnapshot:
 def get_portfolio_snapshot(
     rows: list,
     fiat: Optional[Set[str]] = None,
+    precomputed_positions: Optional[List] = None,
 ) -> PortfolioSnapshot:
     """Compute a portfolio snapshot from ledger rows.
 
     Args:
-        rows: RawRow list from svc.timeline().
-        fiat: Fiat asset set (default: {"EUR", "CZK"}).
+        rows:                  RawRow list from svc.timeline().
+        fiat:                  Fiat asset set (default: {"EUR", "CZK"}).
+        precomputed_positions: Optional pre-computed compute_positions() result.
+                               When provided, skips the internal compute_positions()
+                               call to avoid redundant recomputation.
 
     Returns:
         PortfolioSnapshot DTO with aggregated totals and position summary.
     """
     _fiat = frozenset(a.upper() for a in (fiat or _FIAT_DEFAULT))
 
-    # ── Invested (gross fiat outflows) ────────────────────────────────────────
-    # netto_invested_report totals[currency]["invested_amount"] = gross outflow
-    ni_report = netto_invested_report(rows, bucket="day", fiat=_fiat)
-    invested: Dict[str, Decimal] = {}
-    if ni_report.totals:
-        for currency, metrics in ni_report.totals.items():
-            v = metrics.get("invested_amount", Decimal("0"))
-            if v != Decimal("0"):
-                invested[currency] = v
+    # ── Invested + Net flow — single pass over fiat rows ─────────────────────
+    # Replaces netto_invested_report() + cashflow_report() (each called cashflow()
+    # internally). We first bucket fiat rows by day (same as cashflow(day)) then
+    # split daily nets by sign — identical logic, no separate function calls.
+    _daily_fiat: Dict = defaultdict(Decimal)
+    for row in rows:
+        if row.asset in _fiat:
+            _daily_fiat[(row.timestamp.strftime("%Y-%m-%d"), row.asset)] += row.amount
 
-    # ── Net flow (sum of all fiat movements) ──────────────────────────────────
-    # cashflow_report totals[currency]["net_amount"] = signed net fiat flow
-    cf_report = cashflow_report(rows, bucket="day", fiat=_fiat)
-    net_flow: Dict[str, Decimal] = {}
-    if cf_report.totals:
-        for currency, metrics in cf_report.totals.items():
-            v = metrics.get("net_amount", Decimal("0"))
-            if v != Decimal("0"):
-                net_flow[currency] = v
+    _invested_acc: Dict[str, Decimal] = defaultdict(Decimal)
+    _net_flow_acc: Dict[str, Decimal] = defaultdict(Decimal)
+    for (_, cur), daily_net in _daily_fiat.items():
+        _net_flow_acc[cur] += daily_net
+        if daily_net < Decimal("0"):
+            _invested_acc[cur] += -daily_net  # store as positive
+
+    invested: Dict[str, Decimal] = {k: v for k, v in _invested_acc.items() if v}
+    net_flow: Dict[str, Decimal] = {k: v for k, v in _net_flow_acc.items() if v}
 
     # ── Positions ─────────────────────────────────────────────────────────────
-    positions = compute_positions(rows, _fiat)
+    positions = (
+        precomputed_positions
+        if precomputed_positions is not None
+        else compute_positions(rows, _fiat)
+    )
 
     assets_held = sum(1 for p in positions if p.quantity > Decimal("0"))
 
