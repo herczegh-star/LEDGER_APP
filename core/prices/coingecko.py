@@ -20,15 +20,27 @@ from core.prices.interface import PriceProvider
 # ── Symbol → CoinGecko coin-id mapping ────────────────────────────────────────
 # Extend this dict as new assets are added to the portfolio.
 COINGECKO_IDS: Dict[str, str] = {
-    "BTC":  "bitcoin",
-    "ETH":  "ethereum",
-    "UNI":  "uniswap",
+    "AAVE": "aave",
+    "ARB":  "arbitrum",
     "ATOM": "cosmos",
-    "RUNE": "thorchain",
-    "WOO":  "woo-network",
-    "DYDX": "dydx",
-    "ONDO": "ondo-finance",
+    "AVAX": "avalanche-2",
     "B3":   "b3",
+    "BTC":  "bitcoin",
+    "DOGE": "dogecoin",
+    "DOT":  "polkadot",
+    "DYDX": "dydx",
+    "ETH":  "ethereum",
+    "FET":  "fetch-ai",
+    "GRT":  "the-graph",
+    "LINK": "chainlink",
+    "ONDO": "ondo-finance",
+    "PENGU":"pudgy-penguins",
+    "RUNE": "thorchain",
+    "SOL":  "solana",
+    "TAO":  "bittensor",
+    "UNI":  "uniswap",
+    "WOO":  "woo-network",
+    "XRP":  "ripple",
 }
 
 _BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
