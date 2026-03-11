@@ -14,6 +14,12 @@ ledgerapp = "ledger_app.__main__:main"
 [tool.setuptools.packages.find]
 include = ["core*", "io_module*", "ui*", "cli*", "ledger_app*", "ledger_engine*"]
 
+[tool.flet]
+app_name = "LedgerApp"
+product = "LedgerApp"
+splash_color = "#0b0f14"
+splash_dark_color = "#0b0f14"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tests/legacy", ".venv", "__pycache__", ".git"]
