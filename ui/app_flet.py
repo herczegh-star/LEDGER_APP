@@ -25,9 +25,11 @@ def _blog(msg: str) -> None:
 _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 
 from core.services.ui_facade import create_app_context, create_db, get_dashboard_snapshot, set_db_path
+from core.services import icon_service
 
-# ── Color palette (decent / less neon) ──────────────────────────────────────
-_ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
+# ── Icons — served from user data dir (~/.ledger_app/icons/) ─────────────────
+icon_service.setup()   # migrate bundled icons + create dir
+_ICONS_DIR = icon_service.ICONS_DIR
 
 BG = "#0b0f14"
 BG_CARD = "#0f1621"      # darker card
@@ -664,6 +666,8 @@ def _main_view_impl(page: ft.Page) -> None:
         try:
             _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
             _blog(f"TIMING  get_dashboard_snapshot() {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
+            # Auto-download icons for any new assets (silent, best-effort)
+            icon_service.download_missing([p.asset for p in _snap.positions])
         except Exception as exc:
             _err = exc
             _blog(f"ERROR in _load_prices: {exc}")
@@ -690,7 +694,13 @@ def _main_view_impl(page: ft.Page) -> None:
 def run_ui() -> None:
     _blog("CHECKPOINT 2 - run_ui entered")
     _blog("CHECKPOINT 3 - about to call ft.run(target=main_view)")
-    _assets_dir = str(Path(__file__).parent.parent / "assets")
+    # Serve assets from user data dir so downloaded icons are reachable by Flet
+    _assets_dir = str(icon_service.USER_DATA_DIR)
+    # Migrate splash.gif to user data dir if needed
+    _splash_src = Path(__file__).parent.parent / "assets" / "splash.gif"
+    _splash_dst = icon_service.USER_DATA_DIR / "splash.gif"
+    if _splash_src.exists() and not _splash_dst.exists():
+        _splash_dst.write_bytes(_splash_src.read_bytes())
     ft.run(main_view, assets_dir=_assets_dir)
     _blog("CHECKPOINT 3b - ft.run returned (window closed)")
 
