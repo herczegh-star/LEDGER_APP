@@ -113,8 +113,9 @@ def compute_positions(
         fiat_amount = fiat_by_id.get(row.id)  # may be None for rows without a fiat leg
 
         if row.amount > 0:
-            # ── BUY (or positive REVERSAL): increase position ─────────────
-            # cost = absolute fiat outflow + any fiat fee on this trade
+            # ── BUY / STAKING / positive REVERSAL: increase position ──────────
+            # STAKING rewards have zero fiat cost → lowers blended avg cost basis
+            # (total cost / total quantity = true cost per unit held)
             base_cost = abs(fiat_amount) if fiat_amount is not None else Decimal("0")
             fee_cost  = fee_by_id.get(row.id, Decimal("0"))
             cost      = base_cost + fee_cost

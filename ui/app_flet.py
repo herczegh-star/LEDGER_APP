@@ -195,7 +195,7 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # Dynamic regions
     pills_row   = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
-    cards_col   = ft.Column(spacing=16)   # asset position cards
+    cards_col   = ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)   # asset position cards
 
     _HIDDEN = "••••••"
 
@@ -373,7 +373,7 @@ def _main_view_impl(page: ft.Page) -> None:
                     positions_to_show,
                     f"{state['sort_field']}_{'asc' if state['sort_asc'] else 'desc'}",
                 )
-            ]
+            ] + [ft.Container(height=32)]
         else:
             cards_col.controls = [
                 ft.Container(
@@ -441,11 +441,9 @@ def _main_view_impl(page: ft.Page) -> None:
                 ft.Container(height=16),
                 pills_row,
                 ft.Container(height=12),
-                cards_col,
-                ft.Container(height=32),  # bottom breathing room
+                cards_col,  # scrolls independently, KPI+pills stay fixed
             ],
             spacing=0,
-            scroll=ft.ScrollMode.AUTO,
         ),
     )
 
