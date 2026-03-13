@@ -186,6 +186,7 @@ def _main_view_impl(page: ft.Page) -> None:
     raw: list = []
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
     snap_holder: list = [None]   # last DashboardSnapshotDTO
+    privacy = [False]  # privacy mode — hides sensitive KPI values
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
     w_val = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
@@ -196,8 +197,16 @@ def _main_view_impl(page: ft.Page) -> None:
     pills_row   = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
     cards_col   = ft.Column(spacing=16)   # asset position cards
 
+    _HIDDEN = "••••••"
+
     # ── KPI update ─────────────────────────────────────────────────────────────
     def update_kpis() -> None:
+        if privacy[0]:
+            w_val.value = _HIDDEN; w_val.color = T_MUT
+            w_pnl.value = _HIDDEN; w_pnl.color = T_MUT
+            w_roi.value = _HIDDEN; w_roi.color = T_MUT
+            return
+
         total_cost = sum((p.cost_basis for p in raw), Decimal("0"))
 
         vals = [p.value for p in raw if p.value is not None]
@@ -205,6 +214,7 @@ def _main_view_impl(page: ft.Page) -> None:
             tv = sum(vals, Decimal("0"))
             pnl = tv - total_cost
             w_val.value = _czk(tv)
+            w_val.color = T_PRI
             w_pnl.value = _czk(pnl, sign=True)
             w_pnl.color = _color(pnl)
             if total_cost > 0:
@@ -215,11 +225,9 @@ def _main_view_impl(page: ft.Page) -> None:
                 w_roi.value = "—"
                 w_roi.color = T_MUT
         else:
-            w_val.value = "—"
-            w_pnl.value = "—"
-            w_pnl.color = T_MUT
-            w_roi.value = "—"
-            w_roi.color = T_MUT
+            w_val.value = "—"; w_val.color = T_PRI
+            w_pnl.value = "—"; w_pnl.color = T_MUT
+            w_roi.value = "—"; w_roi.color = T_MUT
 
     # ── Sort pills ─────────────────────────────────────────────────────────────
     def build_pills() -> None:
@@ -576,6 +584,16 @@ def _main_view_impl(page: ft.Page) -> None:
     def on_export(e) -> None:
         open_export_dialog(page, db_path)
 
+    _eye_btn = ft.IconButton(icon=ft.Icons.VISIBILITY, icon_color=T_MUT, icon_size=18, tooltip="Skryť/zobraziť hodnoty")
+
+    def on_toggle_privacy(e) -> None:
+        privacy[0] = not privacy[0]
+        _eye_btn.icon = ft.Icons.VISIBILITY_OFF if privacy[0] else ft.Icons.VISIBILITY
+        update_kpis()
+        page.update()
+
+    _eye_btn.on_click = on_toggle_privacy
+
     # ── Header ────────────────────────────────────────────────────────────────
     _header = ft.Container(
         content=ft.Row(
@@ -583,6 +601,7 @@ def _main_view_impl(page: ft.Page) -> None:
                 ft.Text("LedgerApp 1.0.0", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
                 ft.Row(
                     [
+                        _eye_btn,
                         ft.TextButton("Add Trade", on_click=on_add_trade, style=ft.ButtonStyle(color=GREEN)),
                         ft.TextButton("Reverse", on_click=on_reverse, style=ft.ButtonStyle(color="#f97316")),
                         ft.TextButton("Import", on_click=on_import, style=ft.ButtonStyle(color=BLUE)),
