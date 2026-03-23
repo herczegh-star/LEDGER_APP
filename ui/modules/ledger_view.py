@@ -184,7 +184,46 @@ def build_ledger_view(
     )
 
     status_txt = ft.Text("", size=12, color=T_MUT)
-    table_area = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
+
+    # ── Column widths (px) ────────────────────────────────────────────────────
+    _CW = [160, 75, 55, 110, 65, 95, 80, 140, 155]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note,Actions
+
+    def _hcell(label: str, w: int, right: bool = False) -> ft.Container:
+        return ft.Container(
+            ft.Text(label, color=T_MUT, size=11, weight=ft.FontWeight.BOLD,
+                    text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT),
+            width=w, padding=ft.padding.symmetric(0, 6),
+        )
+
+    def _dcell(text: str, w: int, color: str = T_MUT,
+               right: bool = False, mono: bool = False) -> ft.Container:
+        return ft.Container(
+            ft.Text(text, color=color, size=11,
+                    font_family="monospace" if mono else None,
+                    text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT,
+                    no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+            width=w, padding=ft.padding.symmetric(0, 6),
+        )
+
+    header_row = ft.Container(
+        content=ft.Row([
+            _hcell("Timestamp",  _CW[0]),
+            _hcell("Type",       _CW[1]),
+            _hcell("Asset",      _CW[2]),
+            _hcell("Amount",     _CW[3], right=True),
+            _hcell("Currency",   _CW[4]),
+            _hcell("Trade ID",   _CW[5]),
+            _hcell("Venue",      _CW[6]),
+            _hcell("Note",       _CW[7]),
+            ft.Container(width=_CW[8]),
+        ], spacing=0),
+        bgcolor=BG_HDR,
+        padding=ft.padding.symmetric(8, 8),
+        border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+    )
+
+    data_col  = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
+    table_area = ft.Column([header_row, data_col], expand=True)
 
     _PAGE_SIZE = 50
     _page_idx  = [0]   # mutable so closures can mutate it
@@ -319,7 +358,7 @@ def build_ledger_view(
                 if _rows_holder
                 else "Ledger is empty."
             )
-            table_area.controls = [ft.Text(msg, color=T_MUT, size=13)]
+            data_col.controls = [ft.Text(msg, color=T_MUT, size=13)]
             status_txt.value = (
                 f"0 of {len(_rows_holder)} rows"
                 if _rows_holder
@@ -334,28 +373,13 @@ def build_ledger_view(
         start = _page_idx[0] * _PAGE_SIZE
         page_rows = visible[start: start + _PAGE_SIZE]
 
-        # ── Column headers ────────────────────────────────────────────────────
-        col_defs = [
-            ft.DataColumn(ft.Text("Timestamp",  color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Type",       color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Asset",      color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Amount",     color=T_MUT, size=11, weight=ft.FontWeight.BOLD), numeric=True),
-            ft.DataColumn(ft.Text("Currency",   color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Trade ID",   color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Venue",      color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Note",       color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("",           color=T_MUT, size=11)),  # action column
-        ]
-
-        # ── Data rows ─────────────────────────────────────────────────────────
-        data_rows = []
-        for row in page_rows:
-            type_color  = _TYPE_COLORS.get(row.type, T_MUT)
-            amt_color   = GREEN if row.amount > _ZERO else (RED if row.amount < _ZERO else T_MUT)
-            ts_str      = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
-            note_display = (row.note or "")[:40] + ("…" if len(row.note or "") > 40 else "")
-
-            # Action buttons
+        # ── Data rows (custom Rows — header is fixed above data_col) ─────────────
+        row_widgets = []
+        for i, row in enumerate(page_rows):
+            type_color   = _TYPE_COLORS.get(row.type, T_MUT)
+            amt_color    = GREEN if row.amount > _ZERO else (RED if row.amount < _ZERO else T_MUT)
+            ts_str       = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
+            note_display = (row.note or "")[:30] + ("…" if len(row.note or "") > 30 else "")
             tid = row.id
 
             def _make_reverse_cb(t: str) -> Callable:
@@ -382,37 +406,28 @@ def build_ledger_view(
                     style=ft.ButtonStyle(color=RED, padding=ft.padding.symmetric(0, 4)),
                 ))
 
-            action_cell = ft.DataCell(ft.Row(btns, spacing=0)) if btns else ft.DataCell(ft.Text(""))
+            row_bg = "#0f1621" if i % 2 == 0 else BG_CARD
+            row_widgets.append(ft.Container(
+                content=ft.Row([
+                    _dcell(ts_str,                   _CW[0], T_MUT,       mono=True),
+                    _dcell(row.type,                 _CW[1], type_color),
+                    _dcell(row.asset,                _CW[2], T_PRI),
+                    _dcell(_fmt_amount(row.amount),  _CW[3], amt_color,   right=True, mono=True),
+                    _dcell(row.currency or "—",      _CW[4], T_MUT),
+                    _dcell(_short_id(row.id),        _CW[5], T_MUT,       mono=True),
+                    _dcell(row.venue or "—",         _CW[6], T_MUT),
+                    _dcell(note_display or "—",      _CW[7], T_MUT),
+                    ft.Container(
+                        content=ft.Row(btns, spacing=0, tight=True),
+                        width=_CW[8],
+                    ),
+                ], spacing=0),
+                bgcolor=row_bg,
+                border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+                padding=ft.padding.symmetric(4, 8),
+            ))
 
-            data_rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(ts_str,                  color=T_MUT,      size=11, font_family="monospace")),
-                ft.DataCell(ft.Text(row.type,                color=type_color,  size=11, weight=ft.FontWeight.W_600)),
-                ft.DataCell(ft.Text(row.asset,               color=T_PRI,       size=11, weight=ft.FontWeight.W_600)),
-                ft.DataCell(ft.Text(_fmt_amount(row.amount), color=amt_color,   size=11, font_family="monospace")),
-                ft.DataCell(ft.Text(row.currency or "—",     color=T_MUT,       size=11)),
-                ft.DataCell(ft.Text(_short_id(row.id),       color=T_MUT,       size=11, font_family="monospace")),
-                ft.DataCell(ft.Text(row.venue or "—",        color=T_MUT,       size=11)),
-                ft.DataCell(ft.Text(note_display or "—",     color=T_MUT,       size=11)),
-                action_cell,
-            ]))
-
-        table_area.controls = [
-            ft.Row(
-                [ft.DataTable(
-                    columns=col_defs,
-                    rows=data_rows,
-                    border=ft.border.all(1, BORDER),
-                    border_radius=8,
-                    vertical_lines=ft.BorderSide(1, BORDER),
-                    heading_row_color=BG_HDR,
-                    data_row_color={"hovered": "#1e2a3a"},
-                    column_spacing=58,
-                    horizontal_margin=20,
-                    data_text_style=ft.TextStyle(size=11),
-                )],
-                scroll=ft.ScrollMode.AUTO,
-            )
-        ]
+        data_col.controls = row_widgets
 
         shown = len(visible)
         total = len(_rows_holder)
@@ -440,7 +455,7 @@ def build_ledger_view(
             alignment=ft.MainAxisAlignment.CENTER,
         ) if total_pages > 1 else ft.Container(height=0)
 
-        table_area.controls.append(pagination)
+        data_col.controls.append(pagination)
         page.update()
 
     # ── Control callbacks (filter/sort only — no DB re-fetch) ─────────────────
