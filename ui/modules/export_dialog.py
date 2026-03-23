@@ -112,8 +112,7 @@ def open_export_dialog(page: ft.Page, db_path: str) -> None:
     dd_type.on_change = _on_type_change
 
     def _close(_e=None) -> None:
-        dlg.open = False
-        page.update()
+        page.pop_dialog()
 
     def _submit(_e=None) -> None:
         error_text.value = ""

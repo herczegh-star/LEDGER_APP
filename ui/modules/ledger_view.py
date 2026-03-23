@@ -17,7 +17,7 @@ from typing import Callable, Optional, Tuple
 
 import flet as ft
 
-from core.services.ui_facade import get_ledger_rows, reverse_trade
+from core.services.ui_facade import get_ledger_rows, reverse_trade, delete_trade
 
 # ── Color palette ────────────────────────────────────────────────────────────
 BG_CARD = "#131922"
@@ -186,30 +186,27 @@ def build_ledger_view(
     status_txt = ft.Text("", size=12, color=T_MUT)
     table_area = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
 
+    _PAGE_SIZE = 50
+    _page_idx  = [0]   # mutable so closures can mutate it
+
     # ── Confirmation dialog for Reverse ───────────────────────────────────────
     def _confirm_reverse(trade_id: str, run_fn: Callable) -> None:
         """Open a confirmation dialog; on confirm call reverse_trade()."""
         confirm_dlg: ft.AlertDialog
 
         def _do_reverse(_e=None) -> None:
-            confirm_dlg.open = False
-            page.update()
+            page.pop_dialog()
             try:
                 rev_rows = reverse_trade(db_path, trade_id)
             except ValueError as exc:
                 page.show_dialog(ft.SnackBar(ft.Text(str(exc)), duration=3000))
                 return
-            page.show_dialog(ft.SnackBar(
-                ft.Text(f"{len(rev_rows)} reversal row(s) appended"),
-                duration=3000,
-            ))
-            run_fn()                 # reload this ledger view
+            run_fn()
             if on_after_reverse:
-                on_after_reverse()   # refresh Dashboard / Reports / Positions / Health
+                on_after_reverse()
 
         def _cancel(_e=None) -> None:
-            confirm_dlg.open = False
-            page.update()
+            page.pop_dialog()
 
         confirm_dlg = ft.AlertDialog(
             modal=True,
@@ -255,8 +252,51 @@ def build_ledger_view(
         )
         page.show_dialog(confirm_dlg)
 
+    # ── Confirmation dialog for Delete ────────────────────────────────────────
+    def _confirm_delete(trade_id: str, run_fn: Callable) -> None:
+        """Potvrzení před hard DELETE — stejný vzor jako _confirm_reverse."""
+        confirm_dlg: ft.AlertDialog
+
+        def _do_delete(_e=None) -> None:
+            page.pop_dialog()
+            try:
+                delete_trade(db_path, trade_id)
+            except Exception:
+                pass
+            run_fn()
+            if on_after_reverse:
+                on_after_reverse()
+
+        def _cancel(_e=None) -> None:
+            page.pop_dialog()
+
+        confirm_dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Smazat záznam?", color=RED, size=15, weight=ft.FontWeight.BOLD),
+            bgcolor=BG_HDR,
+            content=ft.Column(
+                [
+                    ft.Text(f"Trade ID: {_short_id(trade_id, 12)}", size=12, color=T_PRI, font_family="monospace"),
+                    ft.Text(
+                        "Řádek bude TRVALE odstraněn z databáze.\n"
+                        "Tato akce je nevratná. Použij pouze pro opravy překlepů.",
+                        size=12, color=RED,
+                    ),
+                ],
+                spacing=8, tight=True, width=360,
+            ),
+            actions=[
+                ft.TextButton("Zrušit", on_click=_cancel, style=ft.ButtonStyle(color=T_MUT)),
+                ft.TextButton("Smazat natrvalo", on_click=_do_delete, style=ft.ButtonStyle(color=RED)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(confirm_dlg)
+
     # ── Render: apply filter/sort and rebuild table ───────────────────────────
-    def _render() -> None:
+    def _render(reset_page: bool = False) -> None:
+        if reset_page:
+            _page_idx[0] = 0
         # Precompute set of already-reversed trade IDs from loaded rows.
         # A trade is reversed if a REVERSAL row exists with note "REVERSAL of {id}...".
         reversed_ids: set = set()
@@ -288,6 +328,12 @@ def build_ledger_view(
             page.update()
             return
 
+        # ── Pagination slice ──────────────────────────────────────────────────
+        total_pages = max(1, (len(visible) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        _page_idx[0] = max(0, min(_page_idx[0], total_pages - 1))
+        start = _page_idx[0] * _PAGE_SIZE
+        page_rows = visible[start: start + _PAGE_SIZE]
+
         # ── Column headers ────────────────────────────────────────────────────
         col_defs = [
             ft.DataColumn(ft.Text("Timestamp",  color=T_MUT, size=11, weight=ft.FontWeight.BOLD)),
@@ -303,33 +349,40 @@ def build_ledger_view(
 
         # ── Data rows ─────────────────────────────────────────────────────────
         data_rows = []
-        for row in visible:
+        for row in page_rows:
             type_color  = _TYPE_COLORS.get(row.type, T_MUT)
             amt_color   = GREEN if row.amount > _ZERO else (RED if row.amount < _ZERO else T_MUT)
             ts_str      = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
             note_display = (row.note or "")[:40] + ("…" if len(row.note or "") > 40 else "")
 
-            # Reverse button — hidden for REVERSAL rows and already-reversed trades
+            # Action buttons
+            tid = row.id
+
+            def _make_reverse_cb(t: str) -> Callable:
+                def _cb(_e=None) -> None:
+                    _confirm_reverse(t, run_rows)
+                return _cb
+
+            def _make_delete_cb(t: str) -> Callable:
+                def _cb(_e=None) -> None:
+                    _confirm_delete(t, run_rows)
+                return _cb
+
+            btns = []
             if row.type != "REVERSAL" and row.id and row.id not in reversed_ids:
-                tid = row.id  # capture for closure
+                btns.append(ft.TextButton(
+                    "Reverse",
+                    on_click=_make_reverse_cb(tid),
+                    style=ft.ButtonStyle(color=ORANGE, padding=ft.padding.symmetric(0, 4)),
+                ))
+            if row.id:
+                btns.append(ft.TextButton(
+                    "Delete",
+                    on_click=_make_delete_cb(tid),
+                    style=ft.ButtonStyle(color=RED, padding=ft.padding.symmetric(0, 4)),
+                ))
 
-                def _make_reverse_cb(t: str) -> Callable:
-                    def _cb(_e=None) -> None:
-                        _confirm_reverse(t, run_rows)
-                    return _cb
-
-                action_cell = ft.DataCell(
-                    ft.TextButton(
-                        "Reverse",
-                        on_click=_make_reverse_cb(tid),
-                        style=ft.ButtonStyle(
-                            color=ORANGE,
-                            padding=ft.padding.symmetric(0, 4),
-                        ),
-                    )
-                )
-            else:
-                action_cell = ft.DataCell(ft.Text(""))
+            action_cell = ft.DataCell(ft.Row(btns, spacing=0)) if btns else ft.DataCell(ft.Text(""))
 
             data_rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(ts_str,                  color=T_MUT,      size=11, font_family="monospace")),
@@ -368,13 +421,33 @@ def build_ledger_view(
             if shown != total
             else f"{total} row{'s' if total != 1 else ''}"
         )
+
+        # ── Pagination controls ───────────────────────────────────────────────
+        def _prev(_e=None):
+            _page_idx[0] = max(0, _page_idx[0] - 1)
+            _render()
+
+        def _next(_e=None):
+            _page_idx[0] = min(total_pages - 1, _page_idx[0] + 1)
+            _render()
+
+        pagination = ft.Row(
+            [
+                ft.IconButton(ft.Icons.CHEVRON_LEFT,  on_click=_prev, disabled=_page_idx[0] == 0, icon_color=T_PRI),
+                ft.Text(f"{_page_idx[0]+1} / {total_pages}", size=12, color=T_MUT),
+                ft.IconButton(ft.Icons.CHEVRON_RIGHT, on_click=_next, disabled=_page_idx[0] >= total_pages - 1, icon_color=T_PRI),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+        ) if total_pages > 1 else ft.Container(height=0)
+
+        table_area.controls.append(pagination)
         page.update()
 
     # ── Control callbacks (filter/sort only — no DB re-fetch) ─────────────────
-    tf_search.on_change = lambda _e: _render()
-    dd_type.on_change   = lambda _e: _render()
-    dd_venue.on_change  = lambda _e: _render()
-    dd_sort.on_change   = lambda _e: _render()
+    tf_search.on_change = lambda _e: _render(reset_page=True)
+    dd_type.on_change   = lambda _e: _render(reset_page=True)
+    dd_venue.on_change  = lambda _e: _render(reset_page=True)
+    dd_sort.on_change   = lambda _e: _render(reset_page=True)
 
     # ── Main run function (fetches from DB, updates dropdowns, renders) ────────
     def run_rows(e=None) -> None:

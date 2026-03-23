@@ -47,8 +47,7 @@ def open_reversal_dialog(
     dlg: ft.AlertDialog
 
     def _close(_e=None) -> None:
-        dlg.open = False
-        page.update()
+        page.pop_dialog()
 
     def _submit(_e=None) -> None:
         error_text.value = ""

@@ -97,8 +97,7 @@ def open_import_dialog(
     dlg: ft.AlertDialog
 
     def _close(_e=None) -> None:
-        dlg.open = False
-        page.update()
+        page.pop_dialog()
 
     def _import(_e=None) -> None:
         path = selected_path[0]
