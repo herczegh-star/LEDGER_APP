@@ -83,8 +83,13 @@ def compute_venue_holdings(
         asset = row.asset.upper()
         venue = row.venue.lower()
 
-        # Skip fiat and fees — neither changes crypto holdings
-        if asset in fiat_set or row.type == "FEE":
+        # Skip fiat assets entirely
+        if asset in fiat_set:
+            continue
+
+        # Crypto FEE (e.g. on-chain withdrawal fee in BTC) reduces the balance
+        if row.type == "FEE":
+            _add(venue, asset, row.amount)
             continue
 
         if row.type not in _HOLDING_TYPES:
