@@ -93,8 +93,18 @@ def open_add_trade_dialog(
     )
 
     tf_price = ft.TextField(
-        label="Price",
-        hint_text="50000  (0 for TRANSFER/FEE)",
+        label="Unit Price",
+        hint_text="e.g. 4 500 000",
+        bgcolor=BG_CARD,
+        border_color=BORDER,
+        color=T_PRI,
+        label_style=ft.TextStyle(color=T_MUT),
+        expand=True,
+    )
+
+    tf_total = ft.TextField(
+        label="Total",
+        hint_text="e.g. 4 500",
         bgcolor=BG_CARD,
         border_color=BORDER,
         color=T_PRI,
@@ -225,12 +235,45 @@ def open_add_trade_dialog(
             ))
         on_success()
 
+    # ── Auto-calculation helpers ─────────────────────────────────────────────
+    def _recalc_total(_e=None) -> None:
+        """Unit Price changed → Total = Amount × Unit Price."""
+        try:
+            amount = Decimal(tf_base_amount.value.strip())
+            price  = Decimal(tf_price.value.strip().replace(" ", ""))
+            tf_total.value = str((amount * price).normalize())
+            tf_total.update()
+        except (InvalidOperation, Exception):
+            pass
+
+    def _recalc_unit_price(_e=None) -> None:
+        """Total changed → Unit Price = Total / Amount."""
+        try:
+            amount = Decimal(tf_base_amount.value.strip())
+            total  = Decimal(tf_total.value.strip().replace(" ", ""))
+            if amount != 0:
+                tf_price.value = str((total / amount).normalize())
+                tf_price.update()
+        except (InvalidOperation, Exception):
+            pass
+
+    def _recalc_on_amount(_e=None) -> None:
+        """Amount changed → keep whichever of Total/Unit Price is filled."""
+        if tf_price.value.strip():
+            _recalc_total()
+        elif tf_total.value.strip():
+            _recalc_unit_price()
+
+    tf_price.on_change       = _recalc_total
+    tf_total.on_change       = _recalc_unit_price
+    tf_base_amount.on_change = _recalc_on_amount
+
     # ── Layout ──────────────────────────────────────────────────────────────
     form = ft.Column(
         [
             ft.Row([dd_type, tf_timestamp], spacing=12),
             ft.Row([tf_base_asset, tf_base_amount], spacing=12),
-            ft.Row([tf_currency, tf_price], spacing=12),
+            ft.Row([tf_currency, tf_price, tf_total], spacing=12),
             tf_venue,
             ft.Row([tf_fee_amount, tf_fee_currency], spacing=12),
             tf_note,
