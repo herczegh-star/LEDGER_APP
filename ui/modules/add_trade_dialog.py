@@ -241,7 +241,7 @@ def open_add_trade_dialog(
         try:
             amount = Decimal(tf_base_amount.value.strip())
             price  = Decimal(tf_price.value.strip().replace(" ", ""))
-            tf_total.value = str((amount * price).normalize())
+            tf_total.value = format((amount * price).normalize(), 'f')
             tf_total.update()
         except (InvalidOperation, Exception):
             pass
@@ -252,7 +252,7 @@ def open_add_trade_dialog(
             amount = Decimal(tf_base_amount.value.strip())
             total  = Decimal(tf_total.value.strip().replace(" ", ""))
             if amount != 0:
-                tf_price.value = str((total / amount).normalize())
+                tf_price.value = format((total / amount).normalize(), 'f')
                 tf_price.update()
         except (InvalidOperation, Exception):
             pass
