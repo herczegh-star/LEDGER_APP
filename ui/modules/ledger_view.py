@@ -17,6 +17,7 @@ from typing import Callable, Optional, Tuple
 
 import flet as ft
 
+from core.constants import TRADE_TYPES
 from core.services.ui_facade import get_ledger_rows, reverse_trade, delete_trade
 
 # ── Color palette ────────────────────────────────────────────────────────────
@@ -87,8 +88,14 @@ def filter_and_sort_ledger(
         result = [r for r in result if r.type == type_filter]
 
     # ── Venue filter ──────────────────────────────────────────────────────────
+    # Matches direct venue rows AND TRANSFER rows where note = destination venue.
     if venue_filter:
-        result = [r for r in result if r.venue == venue_filter]
+        vf = venue_filter.strip().lower()
+        result = [
+            r for r in result
+            if (r.venue or "").lower() == vf
+            or (r.type == "TRANSFER" and (r.note or "").strip().lower() == vf)
+        ]
 
     # ── Sort by timestamp ─────────────────────────────────────────────────────
     reverse_sort = sort_dir == "desc"
@@ -186,23 +193,24 @@ def build_ledger_view(
     status_txt = ft.Text("", size=12, color=T_MUT)
 
     # ── Column widths (px) ────────────────────────────────────────────────────
-    _CW = [160, 75, 55, 110, 65, 95, 80, 140, 155]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note,Actions
+    _CW = [160, 75, 55, 110, 85, 95, 80, 140, 155]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note,Actions
 
     def _hcell(label: str, w: int, right: bool = False) -> ft.Container:
         return ft.Container(
-            ft.Text(label, color=T_MUT, size=11, weight=ft.FontWeight.BOLD,
-                    text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT),
-            width=w, padding=ft.padding.symmetric(0, 6),
+            ft.Text(label, color=T_MUT, size=12, weight=ft.FontWeight.BOLD,
+                    text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT,
+                    no_wrap=True),
+            width=w, padding=ft.padding.symmetric(0, 8),
         )
 
     def _dcell(text: str, w: int, color: str = T_MUT,
                right: bool = False, mono: bool = False) -> ft.Container:
         return ft.Container(
-            ft.Text(text, color=color, size=11,
+            ft.Text(text, color=color, size=12,
                     font_family="monospace" if mono else None,
                     text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT,
                     no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-            width=w, padding=ft.padding.symmetric(0, 6),
+            width=w, padding=ft.padding.symmetric(0, 8),
         )
 
     header_row = ft.Container(
@@ -218,8 +226,8 @@ def build_ledger_view(
             ft.Container(width=_CW[8]),
         ], spacing=0),
         bgcolor=BG_HDR,
-        padding=ft.padding.symmetric(8, 8),
-        border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+        padding=ft.padding.symmetric(10, 8),
+        border=ft.border.only(bottom=ft.BorderSide(2, BORDER)),
     )
 
     data_col  = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
@@ -424,7 +432,7 @@ def build_ledger_view(
                 ], spacing=0),
                 bgcolor=row_bg,
                 border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
-                padding=ft.padding.symmetric(4, 8),
+                padding=ft.padding.symmetric(9, 8),
             ))
 
         data_col.controls = row_widgets
@@ -469,16 +477,19 @@ def build_ledger_view(
         nonlocal _rows_holder
         _rows_holder = get_ledger_rows(db_path)
 
-        # Rebuild type dropdown from distinct types in data
-        types = sorted({r.type for r in _rows_holder})
+        # Type dropdown always shows all known types (not just those in current data)
         dd_type.options = [ft.dropdown.Option("", "All types")] + [
-            ft.dropdown.Option(t, t) for t in types
+            ft.dropdown.Option(t, t) for t in TRADE_TYPES
         ]
-        if dd_type.value and dd_type.value not in types:
-            dd_type.value = ""
 
-        # Rebuild venue dropdown from distinct venues in data
-        venues = sorted({r.venue for r in _rows_holder if r.venue})
+        # Rebuild venue dropdown — include TRANSFER destinations from note field
+        direct_venues = {r.venue for r in _rows_holder if r.venue}
+        dest_venues = {
+            r.note.strip().lower()
+            for r in _rows_holder
+            if r.type == "TRANSFER" and r.note and " " not in r.note.strip()
+        }
+        venues = sorted(direct_venues | dest_venues)
         dd_venue.options = [ft.dropdown.Option("", "All venues")] + [
             ft.dropdown.Option(v, v) for v in venues
         ]
