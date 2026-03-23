@@ -172,12 +172,18 @@ def build_venue_breakdown(
                             ft.Row(
                                 [
                                     _stat("Assets", str(vdto.assets_held)),
-                                    _stat("Net Invested", _czk(vdto.cost_basis_total)),
+                                    *(
+                                        [_stat("Net Invested", _czk(vdto.cost_basis_total))]
+                                        if vdto.cost_basis_total > _ZERO else []
+                                    ),
                                     _stat("Value", _czk(vdto.value_total)),
-                                    _stat(
-                                        "Unrealized PnL",
-                                        _czk(unr, sign=True),
-                                        value_color=_color(unr),
+                                    *(
+                                        [_stat(
+                                            "Unrealized PnL",
+                                            _czk(unr, sign=True),
+                                            value_color=_color(unr),
+                                        )]
+                                        if unr is not None else []
                                     ),
                                 ],
                                 spacing=28,

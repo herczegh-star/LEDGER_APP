@@ -286,9 +286,26 @@ def get_dashboard_snapshot(
         cost_basis_total = sum((p.cost_basis for p in venue_positions), _ZERO)
         venue_vals = [p.value for p in venue_positions if p.value is not None]
         venue_value = sum(venue_vals, _ZERO) if venue_vals else None
-        venue_unr = (venue_value - cost_basis_total) if venue_value is not None else None
 
         venue_holdings = all_holdings.get(venue, {})
+
+        # Wallet-only venue (TRANSFER-in only): WAC positions are empty but holdings exist.
+        # Compute value directly from physical holdings × spot price.
+        if venue_value is None and venue_holdings and prices_map:
+            holding_vals = [
+                qty * prices_map[asset]
+                for asset, qty in venue_holdings.items()
+                if qty > _ZERO and prices_map.get(asset) is not None
+            ]
+            if holding_vals:
+                venue_value = sum(holding_vals, _ZERO)
+
+        # Only show unrealized PnL when there is a real cost basis (not wallet-only).
+        venue_unr = (
+            (venue_value - cost_basis_total)
+            if venue_value is not None and cost_basis_total > _ZERO
+            else None
+        )
         physical_assets_held = sum(1 for q in venue_holdings.values() if q > _ZERO)
 
         by_venue[venue] = VenueDashboardDTO(
@@ -934,3 +951,12 @@ def reverse_trade(db_path: str, trade_id: str) -> list:
     """Append REVERSAL rows for a trade group. Raises ValueError if not found."""
     from core.services.reversal_service import reverse_trade as _rt
     return _rt(db_path, trade_id)
+
+
+def delete_trade(db_path: str, trade_id: str) -> int:
+    """Hard DELETE všech řádků se stejným trade_id. Vrátí počet smazaných řádků."""
+    store = LedgerStore(db_path)
+    try:
+        return store.delete_by_id(trade_id)
+    finally:
+        store.close()
