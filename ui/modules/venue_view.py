@@ -11,7 +11,7 @@ from typing import Optional
 
 import flet as ft
 
-from core.services.ui_facade import get_dashboard_snapshot
+from core.services.ui_facade import get_dashboard_snapshot, PositionDTO
 
 # ── Color palette (mirrors app_flet.py) ─────────────────────────────────────
 BG        = "#0b0f14"
@@ -104,7 +104,17 @@ def build_venue_view(
     )
 
     # ── Asset card builder ─────────────────────────────────────────────────
-    def make_card(p, physical_qty: Optional[Decimal] = None) -> ft.Container:
+    def make_card(
+        p,
+        physical_qty: Optional[Decimal] = None,
+        wallet_only: bool = False,
+    ) -> ft.Container:
+        """Render one asset card.
+
+        wallet_only=True: venue has no BUY/SELL rows (pure wallet/transfer
+        destination).  WAC, Net Invested and ROI are meaningless — show "—".
+        qty + value (if a spot price is available) are still displayed.
+        """
         unr      = p.unrealized_pnl
         roi_total = p.roi_total
         roi_real  = p.roi_realized
@@ -140,11 +150,11 @@ def build_venue_view(
                 )
             )
         stat_items += [
-            stat("Avg Buy",      _czk(p.wac)),
-            stat("Net Invested", _czk(p.cost_basis)),
-            stat("Spot Price",   _czk(p.spot_price)),
-            stat("Value",        _czk(p.value)),
-            stat("ROI (Realized)", _pct_pts(roi_real)),
+            stat("Avg Buy",        "—" if wallet_only else _czk(p.wac)),
+            stat("Net Invested",   "—" if wallet_only else _czk(p.cost_basis)),
+            stat("Spot Price",     _czk(p.spot_price)),
+            stat("Value",          _czk(p.value)),
+            stat("ROI (Realized)", "—" if wallet_only else _pct_pts(roi_real)),
         ]
 
         return ft.Container(
@@ -180,23 +190,52 @@ def build_venue_view(
 
     # ── Cards builder ──────────────────────────────────────────────────────
     def _build_cards() -> None:
-        physical_qtys: dict = {}
-        if venue_filter[0] is not None and snap_holder[0] is not None:
-            vdto = snap_holder[0].by_venue.get(venue_filter[0])
-            if vdto and vdto.holdings:
-                held_assets = {a for a, q in vdto.holdings.items() if q > _ZERO}
-                positions_to_show = [p for p in raw if p.asset in held_assets]
-                physical_qtys = {a: q for a, q in vdto.holdings.items() if q > _ZERO}
-            else:
-                positions_to_show = vdto.positions if vdto else []
-        else:
-            positions_to_show = []   # no filter = no asset cards (just venue overview)
+        if venue_filter[0] is None or snap_holder[0] is None:
+            cards_col.controls = []
+            return
 
-        if positions_to_show:
-            cards_col.controls = [
+        vdto = snap_holder[0].by_venue.get(venue_filter[0])
+
+        if vdto and vdto.positions:
+            # Normal venue: WAC positions exist (BUY/SELL rows are recorded here).
+            # Use venue-specific positions so WAC / cost_basis / PnL reflect only
+            # this venue's activity.  Physical qty from holdings (TRANSFER-aware)
+            # is shown as a secondary "Na VENUE" stat when it differs.
+            physical_qtys = {a: q for a, q in vdto.holdings.items() if q > _ZERO}
+            cards = [
                 make_card(p, physical_qty=physical_qtys.get(p.asset))
-                for p in sorted(positions_to_show, key=lambda p: p.asset)
+                for p in sorted(vdto.positions, key=lambda p: p.asset)
             ]
+
+        elif vdto and vdto.holdings:
+            # Wallet-only venue: no BUY/SELL rows → WAC positions are empty.
+            # Show qty + value from physical holdings.
+            # WAC / Net Invested / ROI have no meaning here → displayed as "—".
+            # Spot price is taken from the global snapshot (same price, no re-fetch).
+            global_by_asset = {p.asset: p for p in raw}
+            cards = []
+            for asset in sorted(vdto.holdings):
+                qty = vdto.holdings[asset]
+                if qty <= _ZERO:
+                    continue
+                g = global_by_asset.get(asset)
+                spot = g.spot_price if g else None
+                wallet_p = PositionDTO(
+                    asset=asset,
+                    quantity=qty,
+                    wac=_ZERO,
+                    cost_basis=_ZERO,
+                    realized_pnl=_ZERO,
+                    spot_price=spot,
+                    value=(qty * spot) if spot is not None else None,
+                )
+                cards.append(make_card(wallet_p, wallet_only=True))
+
+        else:
+            cards = []
+
+        if cards:
+            cards_col.controls = cards
         elif venue_filter[0]:
             cards_col.controls = [
                 ft.Container(
