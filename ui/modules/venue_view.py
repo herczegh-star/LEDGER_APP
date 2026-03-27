@@ -138,7 +138,7 @@ def build_venue_view(
             )
 
         stat_items = [stat("Amount", _amt(p.quantity, p.asset))]
-        if physical_qty is not None and venue_filter[0]:
+        if physical_qty is not None and venue_filter[0] and physical_qty != p.quantity:
             stat_items.append(
                 ft.Column(
                     [
