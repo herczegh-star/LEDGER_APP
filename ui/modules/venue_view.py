@@ -304,7 +304,7 @@ def build_venue_view(
                 filter_bar,
                 ft.Container(height=4),
                 cards_col,
-                ft.Container(height=32),
+                ft.Container(height=80),
             ],
             spacing=0,
             scroll=ft.ScrollMode.AUTO,
