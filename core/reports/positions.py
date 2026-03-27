@@ -73,7 +73,10 @@ def compute_positions(
     fiat = frozenset(a.upper() for a in fiat)
 
     # ── Step 1: deterministic processing order ───────────────────────────────
-    sorted_rows = sorted(rows, key=lambda r: (r.timestamp, r.id or ""))
+    # Within the same (timestamp, trade_id), outgoing legs (amount < 0) are
+    # sorted before incoming legs so cost basis is available for transfer in
+    # asset→asset swaps (e.g. TAO→USDC).
+    sorted_rows = sorted(rows, key=lambda r: (r.timestamp, r.id or "", 0 if r.amount < 0 else 1))
 
     # ── Step 2: index fiat legs by trade_id ──────────────────────────────────
     # fiat_by_id[trade_id] = signed fiat amount of the quote leg
@@ -99,6 +102,12 @@ def compute_positions(
     # ── Step 3: process non-fiat investment rows in chronological order ───────
     states: Dict[str, _State] = {}
 
+    # cost_transfer[trade_id] = CZK cost basis removed from the outgoing asset
+    # in an asset→asset swap, to be applied to the incoming asset.
+    # Realized P&L is deferred — it will be computed when the incoming asset is
+    # eventually sold for fiat.
+    cost_transfer: Dict[str, Decimal] = {}
+
     for row in sorted_rows:
         asset = row.asset.upper()
         if asset in fiat:
@@ -110,15 +119,22 @@ def compute_positions(
             states[asset] = _State()
         state = states[asset]
 
-        fiat_amount = fiat_by_id.get(row.id)  # may be None for rows without a fiat leg
+        fiat_amount = fiat_by_id.get(row.id)  # None when no fiat leg exists
 
         if row.amount > 0:
-            # ── BUY / STAKING / positive REVERSAL: increase position ──────────
-            # STAKING rewards have zero fiat cost → lowers blended avg cost basis
-            # (total cost / total quantity = true cost per unit held)
-            base_cost = abs(fiat_amount) if fiat_amount is not None else Decimal("0")
-            fee_cost  = fee_by_id.get(row.id, Decimal("0"))
-            cost      = base_cost + fee_cost
+            # ── BUY / STAKING / positive REVERSAL / asset→asset incoming ─────
+            if fiat_amount is not None:
+                # Normal fiat trade: cost = fiat paid + fiat fee
+                base_cost = abs(fiat_amount)
+                fee_cost  = fee_by_id.get(row.id, Decimal("0"))
+                cost      = base_cost + fee_cost
+            elif row.id in cost_transfer:
+                # Asset→asset swap: inherit cost basis from the outgoing leg.
+                # STAKING rewards have zero fiat cost → lowers blended WAC.
+                cost = cost_transfer[row.id]
+            else:
+                # STAKING or no known cost (zero cost basis)
+                cost = Decimal("0")
 
             state.quantity   += row.amount
             state.cost_basis += cost
@@ -130,9 +146,6 @@ def compute_positions(
             # Per project principle: diagnostics warn, never block.
             sold_qty = abs(row.amount)
 
-            proceeds = abs(fiat_amount) if fiat_amount is not None else Decimal("0")
-            fee_cost = fee_by_id.get(row.id, Decimal("0"))
-
             wac_per_unit = (
                 state.cost_basis / state.quantity
                 if state.quantity > 0
@@ -142,7 +155,16 @@ def compute_positions(
 
             state.quantity   -= sold_qty
             state.cost_basis -= cost_removed
-            state.realized_pnl += proceeds - cost_removed - fee_cost
+
+            if fiat_amount is not None:
+                # Normal fiat trade: realize P&L now
+                proceeds = abs(fiat_amount)
+                fee_cost = fee_by_id.get(row.id, Decimal("0"))
+                state.realized_pnl += proceeds - cost_removed - fee_cost
+            else:
+                # Asset→asset swap: transfer cost basis to the incoming asset.
+                # P&L is deferred until the incoming asset is sold for fiat.
+                cost_transfer[row.id] = cost_removed
 
     # ── Step 4: build output ──────────────────────────────────────────────────
     result: List[PositionRow] = []

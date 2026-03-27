@@ -392,3 +392,130 @@ def test_custom_fiat_set():
     assets = {p.asset for p in result}
     assert "ETH" in assets
     assert "USD" not in assets
+
+
+# ── 9. Asset→asset swaps (cost basis transfer) ────────────────────────────────
+
+def make_swap(
+    trade_id: str,
+    out_asset: str,
+    out_amount: Decimal,
+    in_asset: str,
+    in_amount: Decimal,
+    ts: datetime = _TS,
+    venue: str = "test",
+) -> List[RawRow]:
+    """Return 2 RawRow objects for an asset→asset swap (neither leg is fiat)."""
+    price = in_amount / out_amount
+    return [
+        RawRow(
+            id=trade_id,
+            timestamp=ts,
+            type="SELL",
+            asset=out_asset.upper(),
+            amount=-out_amount,
+            currency=in_asset.upper(),
+            price=price,
+            venue=venue,
+        ),
+        RawRow(
+            id=trade_id,
+            timestamp=ts,
+            type="SELL",
+            asset=in_asset.upper(),
+            amount=in_amount,
+            currency=in_asset.upper(),
+            price=Decimal("1"),
+            venue=venue,
+        ),
+    ]
+
+
+def test_asset_to_asset_usdc_appears_in_positions():
+    """After TAO→USDC swap, USDC must be a position (not excluded as fiat)."""
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    assets = {p.asset for p in result}
+    assert "USDC" in assets, "USDC must appear as a position"
+
+
+def test_asset_to_asset_usdc_cost_basis_nonzero():
+    """USDC received via TAO→USDC swap must inherit TAO's cost basis (not zero)."""
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    usdc = _get(result, "USDC")
+    assert usdc.cost_basis > Decimal("0"), f"USDC cost_basis must be > 0, got {usdc.cost_basis}"
+
+
+def test_asset_to_asset_cost_basis_transferred():
+    """Cost basis removed from TAO must equal cost basis gained by USDC."""
+    # Buy TAO for 100 EUR, then swap all of it for USDC
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    tao  = _get(result, "TAO")
+    usdc = _get(result, "USDC")
+    # Full swap → TAO cost_basis must be 0; USDC must have received it
+    assert tao.cost_basis == Decimal("0"), f"TAO cost_basis should be 0, got {tao.cost_basis}"
+    assert usdc.cost_basis == Decimal("100"), f"USDC cost_basis should be 100, got {usdc.cost_basis}"
+
+
+def test_asset_to_asset_no_false_realized_pnl():
+    """TAO→USDC swap must NOT realize any P&L — deferral until USDC→EUR."""
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    tao = _get(result, "TAO")
+    assert tao.realized_pnl == Decimal("0"), (
+        f"P&L must be deferred on asset→asset swap, got {tao.realized_pnl}"
+    )
+
+
+def test_asset_to_asset_then_sell_to_fiat_realizes_pnl():
+    """After TAO→USDC→EUR chain, P&L is realized only at the USDC→EUR step."""
+    # Buy TAO: 100 EUR → swap to 112 USDC → sell USDC for 115 EUR
+    rows = (
+        make_buy("t1",  "TAO",  Decimal("0.32"), "EUR",  Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO",  Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+        + make_sell("t3", "USDC", Decimal("112"),  "EUR",  Decimal("115"), ts=_ts(3))
+    )
+    result = compute_positions(rows)
+    usdc = _get(result, "USDC")
+    # Proceeds = 115 EUR, cost_basis transferred = 100 EUR → realized_pnl = 15 EUR
+    assert usdc.realized_pnl == Decimal("15"), (
+        f"realized_pnl should be 15 EUR, got {usdc.realized_pnl}"
+    )
+
+
+def test_asset_to_asset_tao_quantity_zero_after_full_swap():
+    """After swapping all TAO, TAO quantity must be 0."""
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    tao = _get(result, "TAO")
+    assert tao.quantity == Decimal("0"), f"TAO quantity should be 0, got {tao.quantity}"
+
+
+def test_asset_to_asset_usdc_avg_buy_nonzero():
+    """After TAO→USDC swap, USDC WAC (avg buy) must reflect inherited cost basis."""
+    rows = (
+        make_buy("t1", "TAO", Decimal("0.32"), "EUR", Decimal("100"), ts=_ts(1))
+        + make_swap("t2", "TAO", Decimal("0.32"), "USDC", Decimal("112"), ts=_ts(2))
+    )
+    result = compute_positions(rows)
+    usdc = _get(result, "USDC")
+    # WAC = 100 / 112 ≈ 0.892857... EUR/USDC
+    assert usdc.wac > Decimal("0"), f"USDC WAC must be > 0, got {usdc.wac}"
+    assert usdc.wac == usdc.cost_basis / usdc.quantity

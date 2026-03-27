@@ -18,7 +18,7 @@ from typing import FrozenSet, List, Optional
 from core.ledger_store import LedgerStore
 from core.model import RawRow
 
-_FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
+_FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK", "USDC", "USDT"})
 
 
 def generate_canonical_id(
