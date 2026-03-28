@@ -601,10 +601,10 @@ def _main_view_impl(page: ft.Page) -> None:
                     [
                         _eye_btn,
                         ft.TextButton("Add Trade", on_click=on_add_trade, style=ft.ButtonStyle(color=GREEN)),
-                        ft.TextButton("Reverse", on_click=on_reverse, style=ft.ButtonStyle(color="#f97316")),
-                        ft.TextButton("Import", on_click=on_import, style=ft.ButtonStyle(color=BLUE)),
+                        ft.TextButton("Reverse", on_click=on_reverse, style=ft.ButtonStyle(color=T_MUT)),
+                        ft.TextButton("Import", on_click=on_import, style=ft.ButtonStyle(color=T_MUT)),
                         ft.TextButton("Export", on_click=on_export, style=ft.ButtonStyle(color=T_MUT)),
-                        ft.TextButton("Refresh", on_click=refresh, style=ft.ButtonStyle(color=T_PRI)),
+                        ft.TextButton("Refresh", on_click=refresh, style=ft.ButtonStyle(color=T_MUT)),
                     ],
                     spacing=0,
                 ),
