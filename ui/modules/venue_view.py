@@ -98,6 +98,11 @@ def build_venue_view(
         scroll=ft.ScrollMode.AUTO,
     )
 
+    # ── Detail view — fixed header + independent scrollable asset area ─────
+    detail_header = ft.Column(spacing=0)
+    detail_scroll = ft.Column([], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True)
+    detail_col    = ft.Column([detail_header, detail_scroll], spacing=0, expand=True)
+
     # ── Asset card builder ─────────────────────────────────────────────────
     def make_card(
         p,
@@ -227,6 +232,7 @@ def build_venue_view(
     def _show_overview() -> None:
         if snap_holder[0] is None:
             content_col.controls = []
+            view.content = scroll_col
             return
         from ui.modules.venue_breakdown_widget import build_venue_breakdown
         section = build_venue_breakdown(
@@ -235,11 +241,14 @@ def build_venue_view(
             active_venue=None,
         )
         content_col.controls = section.controls
+        view.content = scroll_col
 
     # ── Detail state ───────────────────────────────────────────────────────
     def _show_detail(venue_name: str) -> None:
         if snap_holder[0] is None:
-            content_col.controls = []
+            detail_header.controls = []
+            detail_scroll.controls = []
+            view.content = detail_col
             return
         from ui.modules.venue_breakdown_widget import build_venue_card
 
@@ -262,20 +271,25 @@ def build_venue_view(
                 )
             ]
 
-        content_col.controls = [
+        # Fixed header: back button + venue summary card
+        detail_header.controls = [
             back_btn,
             ft.Container(height=8),
             venue_card,
-            ft.Container(height=16),
-            *asset_cards,
+            ft.Container(height=12),
         ]
+
+        # Scrollable area: only asset position cards
+        detail_scroll.controls = [*asset_cards, ft.Container(height=80)]
+
+        view.content = detail_col
 
     # ── Navigation handlers ────────────────────────────────────────────────
     def _on_venue_click(v: str) -> None:
         view_state[0] = "detail"
         selected_venue[0] = v
         _show_detail(v)
-        scroll_col.scroll_to(offset=0)
+        detail_scroll.scroll_to(offset=0)
         page.update()
 
     def _on_back() -> None:
