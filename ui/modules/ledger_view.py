@@ -193,24 +193,28 @@ def build_ledger_view(
     status_txt = ft.Text("", size=12, color=T_MUT)
 
     # ── Column widths (px) ────────────────────────────────────────────────────
-    _CW = [160, 75, 55, 110, 85, 95, 80, 140, 155]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note,Actions
+    _CW = [160, 75, 70, 110, 85, 130, 90, 0, 120]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note(expand),Actions
 
-    def _hcell(label: str, w: int, right: bool = False) -> ft.Container:
+    def _hcell(label: str, w: int, right: bool = False, expand: bool = False) -> ft.Container:
         return ft.Container(
             ft.Text(label, color=T_MUT, size=12, weight=ft.FontWeight.BOLD,
                     text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT,
                     no_wrap=True),
-            width=w, padding=ft.padding.symmetric(0, 8),
+            expand=expand if expand else None,
+            width=w if not expand else None,
+            padding=ft.padding.symmetric(0, 8),
         )
 
     def _dcell(text: str, w: int, color: str = T_MUT,
-               right: bool = False, mono: bool = False) -> ft.Container:
+               right: bool = False, mono: bool = False, expand: bool = False) -> ft.Container:
         return ft.Container(
             ft.Text(text, color=color, size=12,
                     font_family="monospace" if mono else None,
                     text_align=ft.TextAlign.RIGHT if right else ft.TextAlign.LEFT,
                     no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-            width=w, padding=ft.padding.symmetric(0, 8),
+            expand=expand if expand else None,
+            width=w if not expand else None,
+            padding=ft.padding.symmetric(0, 8),
         )
 
     header_row = ft.Container(
@@ -222,7 +226,7 @@ def build_ledger_view(
             _hcell("Currency",   _CW[4]),
             _hcell("Trade ID",   _CW[5]),
             _hcell("Venue",      _CW[6]),
-            _hcell("Note",       _CW[7]),
+            _hcell("Note",       _CW[7], expand=True),
             ft.Container(width=_CW[8]),
         ], spacing=0),
         bgcolor=BG_HDR,
@@ -230,7 +234,8 @@ def build_ledger_view(
         border=ft.border.only(bottom=ft.BorderSide(2, BORDER)),
     )
 
-    data_col  = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
+    data_col  = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, expand=True,
+                          horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
     table_area = ft.Column([header_row, data_col], expand=True)
 
     _PAGE_SIZE = 50
@@ -447,7 +452,7 @@ def build_ledger_view(
                         _dcell(row.currency or "—",      _CW[4], T_MUT),
                         _dcell(_short_id(row.id),        _CW[5], T_MUT,       mono=True),
                         _dcell(row.venue or "—",         _CW[6], T_MUT),
-                        _dcell(note_display or "—",      _CW[7], T_MUT),
+                        _dcell(note_display or "—",      _CW[7], T_MUT,       expand=True),
                         ft.Container(
                             content=ft.Row(btns, spacing=0, tight=True),
                             width=_CW[8],
@@ -463,6 +468,7 @@ def build_ledger_view(
                 border=ft.border.all(1, _GROUP_BORDER),
                 border_radius=7,
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                expand=True,
             ))
 
         data_col.controls = row_widgets
