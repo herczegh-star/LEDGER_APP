@@ -3,6 +3,10 @@
 Public API:
     build_venue_view(page, db_path, price_provider=None, fiat="CZK")
         -> (ft.Container view, callable refresh_fn)
+
+State machine:
+    view_state[0] == "overview"  →  full venue breakdown list
+    view_state[0] == "detail"    →  single venue header + asset position cards
 """
 from __future__ import annotations
 
@@ -75,32 +79,23 @@ def build_venue_view(
     """
     # ── State ──────────────────────────────────────────────────────────────
     snap_holder: list = [None]
-    venue_filter: list = [None]
-    raw: list = []          # full PositionDTO list from snapshot
+    view_state: list = ["overview"]   # "overview" | "detail"
+    selected_venue: list = [None]
+    raw: list = []
 
-    # ── Dynamic regions ────────────────────────────────────────────────────
-    venue_col  = ft.Column(spacing=8)
-    cards_col  = ft.Column(spacing=16)
-    _filter_label = ft.Text("", size=12, color=T_PRI)
+    # ── Dynamic content column — controls replaced on state transitions ────
+    content_col = ft.Column(spacing=0)
 
-    filter_bar = ft.Container(
-        visible=False,
-        content=ft.Row(
-            [
-                ft.Text("Venue filter:", size=11, color=T_MUT),
-                _filter_label,
-                ft.TextButton(
-                    "x clear",
-                    on_click=lambda e: _clear_venue_filter(),
-                    style=ft.ButtonStyle(color=T_MUT, padding=ft.padding.symmetric(0, 4)),
-                ),
-            ],
-            spacing=8,
-            tight=True,
-        ),
-        bgcolor="#162030",
-        border_radius=6,
-        padding=ft.padding.symmetric(4, 12),
+    # scroll_col holds the page title + content_col; scroll is reset on nav
+    scroll_col = ft.Column(
+        [
+            ft.Text("Venues", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+            ft.Container(height=12),
+            content_col,
+            ft.Container(height=80),
+        ],
+        spacing=0,
+        scroll=ft.ScrollMode.AUTO,
     )
 
     # ── Asset card builder ─────────────────────────────────────────────────
@@ -109,13 +104,13 @@ def build_venue_view(
         physical_qty: Optional[Decimal] = None,
         wallet_only: bool = False,
     ) -> ft.Container:
-        """Render one asset card.
+        """Render one asset position card.
 
         wallet_only=True: venue has no BUY/SELL rows (pure wallet/transfer
         destination).  WAC, Net Invested and ROI are meaningless — show "—".
         qty + value (if a spot price is available) are still displayed.
         """
-        unr      = p.unrealized_pnl
+        unr       = p.unrealized_pnl
         roi_total = p.roi_total
         roi_real  = p.roi_realized
         bc = GREEN if (unr is not None and unr >= 0) else RED if unr is not None else BORDER
@@ -138,11 +133,12 @@ def build_venue_view(
             )
 
         stat_items = [stat("Amount", _amt(p.quantity, p.asset))]
-        if physical_qty is not None and venue_filter[0] and physical_qty != p.quantity:
+        # Show physical qty only when it differs from WAC qty (transfer-adjusted)
+        if physical_qty is not None and physical_qty != p.quantity:
             stat_items.append(
                 ft.Column(
                     [
-                        ft.Text(f"Na {venue_filter[0].upper()}", size=11, color=BLUE),
+                        ft.Text(f"Na {selected_venue[0].upper()}", size=11, color=BLUE),
                         ft.Text(_amt(physical_qty, p.asset), size=13, color=T_PRI),
                     ],
                     spacing=2,
@@ -188,30 +184,23 @@ def build_venue_view(
             shadow=glow,
         )
 
-    # ── Cards builder ──────────────────────────────────────────────────────
-    def _build_cards() -> None:
-        if venue_filter[0] is None or snap_holder[0] is None:
-            cards_col.controls = []
-            return
+    # ── Asset cards for a given venue ──────────────────────────────────────
+    def _make_asset_cards(venue_name: str) -> list:
+        if snap_holder[0] is None:
+            return []
 
-        vdto = snap_holder[0].by_venue.get(venue_filter[0])
+        vdto = snap_holder[0].by_venue.get(venue_name)
 
         if vdto and vdto.positions:
-            # Normal venue: WAC positions exist (BUY/SELL rows are recorded here).
-            # Use venue-specific positions so WAC / cost_basis / PnL reflect only
-            # this venue's activity.  Physical qty from holdings (TRANSFER-aware)
-            # is shown as a secondary "Na VENUE" stat when it differs.
+            # Normal venue: use venue-specific WAC positions; physical qty as secondary stat
             physical_qtys = {a: q for a, q in vdto.holdings.items() if q > _ZERO}
-            cards = [
+            return [
                 make_card(p, physical_qty=physical_qtys.get(p.asset))
                 for p in sorted(vdto.positions, key=lambda p: p.asset)
             ]
 
         elif vdto and vdto.holdings:
-            # Wallet-only venue: no BUY/SELL rows → WAC positions are empty.
-            # Show qty + value from physical holdings.
-            # WAC / Net Invested / ROI have no meaning here → displayed as "—".
-            # Spot price is taken from the global snapshot (same price, no re-fetch).
+            # Wallet-only venue: synthesise PositionDTOs from physical holdings
             global_by_asset = {p.asset: p for p in raw}
             cards = []
             for asset in sorted(vdto.holdings):
@@ -230,54 +219,70 @@ def build_venue_view(
                     value=(qty * spot) if spot is not None else None,
                 )
                 cards.append(make_card(wallet_p, wallet_only=True))
+            return cards
 
-        else:
-            cards = []
+        return []
 
-        if cards:
-            cards_col.controls = cards
-        elif venue_filter[0]:
-            cards_col.controls = [
-                ft.Container(
-                    content=ft.Text("No assets held at this venue.", size=13, color=T_MUT),
-                    padding=ft.padding.symmetric(16, 0),
-                )
-            ]
-        else:
-            cards_col.controls = []
-
-    # ── Venue filter helpers ───────────────────────────────────────────────
-    def _update_filter_bar() -> None:
-        if venue_filter[0]:
-            filter_bar.visible = True
-            _filter_label.value = venue_filter[0].upper()
-        else:
-            filter_bar.visible = False
-            _filter_label.value = ""
-
-    def _rebuild_venue_col() -> None:
+    # ── Overview state ─────────────────────────────────────────────────────
+    def _show_overview() -> None:
         if snap_holder[0] is None:
+            content_col.controls = []
             return
         from ui.modules.venue_breakdown_widget import build_venue_breakdown
         section = build_venue_breakdown(
             snap_holder[0].by_venue,
             on_venue_click=_on_venue_click,
-            active_venue=venue_filter[0],
+            active_venue=None,
         )
-        venue_col.controls = section.controls
+        content_col.controls = section.controls
 
+    # ── Detail state ───────────────────────────────────────────────────────
+    def _show_detail(venue_name: str) -> None:
+        if snap_holder[0] is None:
+            content_col.controls = []
+            return
+        from ui.modules.venue_breakdown_widget import build_venue_card
+
+        vdto = snap_holder[0].by_venue.get(venue_name)
+
+        back_btn = ft.TextButton(
+            "← Zpět",
+            on_click=lambda e: _on_back(),
+            style=ft.ButtonStyle(color=T_MUT),
+        )
+
+        venue_card = build_venue_card(venue_name, vdto) if vdto else ft.Container()
+
+        asset_cards = _make_asset_cards(venue_name)
+        if not asset_cards:
+            asset_cards = [
+                ft.Container(
+                    content=ft.Text("Žádné pozice na tomto venue.", size=13, color=T_MUT),
+                    padding=ft.padding.symmetric(16, 0),
+                )
+            ]
+
+        content_col.controls = [
+            back_btn,
+            ft.Container(height=8),
+            venue_card,
+            ft.Container(height=16),
+            *asset_cards,
+        ]
+
+    # ── Navigation handlers ────────────────────────────────────────────────
     def _on_venue_click(v: str) -> None:
-        venue_filter[0] = None if venue_filter[0] == v else v
-        _update_filter_bar()
-        _rebuild_venue_col()
-        _build_cards()
+        view_state[0] = "detail"
+        selected_venue[0] = v
+        _show_detail(v)
+        scroll_col.scroll_to(offset=0)
         page.update()
 
-    def _clear_venue_filter() -> None:
-        venue_filter[0] = None
-        _update_filter_bar()
-        _rebuild_venue_col()
-        _build_cards()
+    def _on_back() -> None:
+        view_state[0] = "overview"
+        selected_venue[0] = None
+        _show_overview()
+        scroll_col.scroll_to(offset=0)
         page.update()
 
     # ── Refresh ────────────────────────────────────────────────────────────
@@ -286,29 +291,17 @@ def build_venue_view(
         snap = get_dashboard_snapshot(db_path, price_provider, fiat)
         snap_holder[0] = snap
         raw = snap.positions
-        _rebuild_venue_col()
-        _build_cards()
-        _update_filter_bar()
+        if view_state[0] == "detail" and selected_venue[0]:
+            _show_detail(selected_venue[0])
+        else:
+            _show_overview()
         page.update()
 
     # ── Layout ────────────────────────────────────────────────────────────
     view = ft.Container(
         expand=True,
         padding=ft.padding.only(left=24, right=24, top=24, bottom=0),
-        content=ft.Column(
-            [
-                ft.Text("Venues", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
-                ft.Container(height=12),
-                venue_col,
-                ft.Container(height=8),
-                filter_bar,
-                ft.Container(height=4),
-                cards_col,
-                ft.Container(height=80),
-            ],
-            spacing=0,
-            scroll=ft.ScrollMode.AUTO,
-        ),
+        content=scroll_col,
     )
 
     return view, refresh

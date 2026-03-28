@@ -229,6 +229,16 @@ class LedgerStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def delete_by_id(self, row_id: str) -> int:
+        """Hard DELETE všech řádků se stejným id (double-entry pár).
+
+        Vrátí počet smazaných řádků.
+        Použít POUZE pro opravy překlepů — není to append-only operace.
+        """
+        cur = self.conn.execute("DELETE FROM ledger WHERE id = ?", (row_id,))
+        self.conn.commit()
+        return cur.rowcount
+
     def count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]
 

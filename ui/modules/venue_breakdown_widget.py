@@ -1,6 +1,9 @@
 """Venue breakdown widget — shows a per-venue portfolio summary card for the dashboard.
 
 Public API:
+    build_venue_card(venue_name, vdto, on_venue_click=None, is_active=False) -> ft.Container
+        Single venue card, reusable in detail view.
+
     build_venue_breakdown(by_venue, on_venue_click=None, active_venue=None) -> ft.Column
 
     on_venue_click(venue_name: str) — called when user clicks a venue card.
@@ -66,6 +69,136 @@ def _stat(label: str, value: str, value_color: str = T_PRI) -> ft.Column:
     )
 
 
+def build_venue_card(
+    venue_name: str,
+    vdto,
+    on_venue_click: Optional[Callable[[str], None]] = None,
+    is_active: bool = False,
+) -> ft.Container:
+    """Build a single venue summary card.
+
+    Reusable both in the overview list and as the header in the detail view.
+
+    Args:
+        venue_name:      Venue identifier (lowercase).
+        vdto:            VenueDashboardDTO for this venue.
+        on_venue_click:  Optional click handler; receives venue_name as argument.
+        is_active:       Whether to render the card in its active/highlighted state.
+
+    Returns:
+        ft.Container — the venue card widget.
+    """
+    unr = vdto.unrealized_pnl
+
+    # ── Asset chips ──────────────────────────────────────────────────────────
+    if vdto.holdings:
+        chip_items = sorted(
+            ((a, q) for a, q in vdto.holdings.items() if q > _ZERO),
+            key=lambda x: x[0],
+        )
+        chips = [
+            ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text(asset, size=10, color=T_MUT),
+                        ft.Text(_fmt_qty(qty), size=10, color=T_PRI),
+                    ],
+                    spacing=4,
+                    tight=True,
+                ),
+                bgcolor="#162030",
+                border_radius=4,
+                padding=ft.padding.symmetric(2, 6),
+            )
+            for asset, qty in chip_items
+        ]
+    else:
+        chips = [
+            ft.Container(
+                content=ft.Text(p.asset, size=10, color=T_MUT),
+                bgcolor="#162030",
+                border_radius=4,
+                padding=ft.padding.symmetric(2, 6),
+            )
+            for p in vdto.positions
+        ]
+
+    asset_chips = ft.Row(chips, spacing=4, wrap=True)
+
+    def _click(e) -> None:
+        if on_venue_click:
+            on_venue_click(venue_name)
+
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Row(
+                            [
+                                *(
+                                    [ft.Image(
+                                        src=f"venue_icons/{venue_name.lower()}.png",
+                                        width=22, height=22,
+                                        fit=ft.BoxFit.CONTAIN,
+                                    )]
+                                    if icon_service.has_venue_icon(venue_name) else []
+                                ),
+                                ft.Text(
+                                    venue_name.upper(),
+                                    size=13,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=T_PRI if not is_active else ft.Colors.WHITE,
+                                ),
+                                *(
+                                    [ft.Container(
+                                        content=ft.Text("active", size=9, color=BLUE),
+                                        bgcolor=BLUE + "22",
+                                        border_radius=4,
+                                        padding=ft.padding.symmetric(2, 6),
+                                    )]
+                                    if is_active else []
+                                ),
+                            ],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            tight=True,
+                        ),
+                        ft.Row(
+                            [
+                                _stat("Assets", str(vdto.assets_held)),
+                                *(
+                                    [_stat("Net Invested", _czk(vdto.cost_basis_total))]
+                                    if vdto.cost_basis_total > _ZERO else []
+                                ),
+                                _stat("Value", _czk(vdto.value_total)),
+                                *(
+                                    [_stat(
+                                        "Unrealized PnL",
+                                        _czk(unr, sign=True),
+                                        value_color=_color(unr),
+                                    )]
+                                    if unr is not None else []
+                                ),
+                            ],
+                            spacing=28,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                asset_chips,
+            ],
+            spacing=8,
+        ),
+        bgcolor=BG_ACTIVE if is_active else BG_CARD,
+        border=ft.border.all(1, BORDER_ACT if is_active else BORDER),
+        border_radius=10,
+        padding=14,
+        on_click=_click if on_venue_click else None,
+        ink=True,
+    )
+
+
 def build_venue_breakdown(
     by_venue: dict,
     on_venue_click: Optional[Callable[[str], None]] = None,
@@ -89,120 +222,14 @@ def build_venue_breakdown(
     for venue_name, vdto in sorted(by_venue.items()):
         if vdto.assets_held == 0 and not vdto.holdings:
             continue
-
         is_active = (venue_name == active_venue)
-        unr = vdto.unrealized_pnl
-
-        # ── Asset chips — use physical holdings when available ────────────────
-        # holdings: {asset: physical_qty}  (TRANSFER-aware)
-        # Falls back to WAC positions list when holdings is empty.
-        if vdto.holdings:
-            chip_items = sorted(
-                ((a, q) for a, q in vdto.holdings.items() if q > _ZERO),
-                key=lambda x: x[0],
+        venue_cards.append(
+            build_venue_card(
+                venue_name, vdto,
+                on_venue_click=on_venue_click,
+                is_active=is_active,
             )
-            chips = [
-                ft.Container(
-                    content=ft.Row(
-                        [
-                            ft.Text(asset, size=10, color=T_MUT),
-                            ft.Text(_fmt_qty(qty), size=10, color=T_PRI),
-                        ],
-                        spacing=4,
-                        tight=True,
-                    ),
-                    bgcolor="#162030",
-                    border_radius=4,
-                    padding=ft.padding.symmetric(2, 6),
-                )
-                for asset, qty in chip_items
-            ]
-        else:
-            chips = [
-                ft.Container(
-                    content=ft.Text(p.asset, size=10, color=T_MUT),
-                    bgcolor="#162030",
-                    border_radius=4,
-                    padding=ft.padding.symmetric(2, 6),
-                )
-                for p in vdto.positions
-            ]
-
-        asset_chips = ft.Row(chips, spacing=4, wrap=True)
-
-        def _click(e, v=venue_name) -> None:
-            if on_venue_click:
-                on_venue_click(v)
-
-        card = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Row(
-                                [
-                                    *(
-                                        [ft.Image(
-                                            src=f"venue_icons/{venue_name.lower()}.png",
-                                            width=22, height=22,
-                                            fit=ft.BoxFit.CONTAIN,
-                                        )]
-                                        if icon_service.has_venue_icon(venue_name) else []
-                                    ),
-                                    ft.Text(
-                                        venue_name.upper(),
-                                        size=13,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=T_PRI if not is_active else ft.Colors.WHITE,
-                                    ),
-                                    *(
-                                        [ft.Container(
-                                            content=ft.Text("active", size=9, color=BLUE),
-                                            bgcolor=BLUE + "22",
-                                            border_radius=4,
-                                            padding=ft.padding.symmetric(2, 6),
-                                        )]
-                                        if is_active else []
-                                    ),
-                                ],
-                                spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                tight=True,
-                            ),
-                            ft.Row(
-                                [
-                                    _stat("Assets", str(vdto.assets_held)),
-                                    *(
-                                        [_stat("Net Invested", _czk(vdto.cost_basis_total))]
-                                        if vdto.cost_basis_total > _ZERO else []
-                                    ),
-                                    _stat("Value", _czk(vdto.value_total)),
-                                    *(
-                                        [_stat(
-                                            "Unrealized PnL",
-                                            _czk(unr, sign=True),
-                                            value_color=_color(unr),
-                                        )]
-                                        if unr is not None else []
-                                    ),
-                                ],
-                                spacing=28,
-                            ),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
-                    asset_chips,
-                ],
-                spacing=8,
-            ),
-            bgcolor=BG_ACTIVE if is_active else BG_CARD,
-            border=ft.border.all(1, BORDER_ACT if is_active else BORDER),
-            border_radius=10,
-            padding=14,
-            on_click=_click if on_venue_click else None,
-            ink=True,
         )
-        venue_cards.append(card)
 
     if not venue_cards:
         return ft.Column([])
