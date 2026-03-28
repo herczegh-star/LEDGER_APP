@@ -313,3 +313,114 @@ def test_reverse_trade_unknown_id_raises(db):
     """Reversing a non-existent trade_id raises ValueError."""
     with pytest.raises(ValueError):
         reverse_trade(db, "nonexistent-id-00000000")
+
+
+# ── TRANSFER + fee ─────────────────────────────────────────────────────────────
+
+def test_transfer_without_fee_writes_one_row(db):
+    """TRANSFER without fee_amount → exactly 1 row."""
+    result = add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=None),
+        db,
+    )
+    assert result.success, result.error_message
+    assert _count(db) == 1
+
+
+def test_transfer_with_fee_writes_two_rows(db):
+    """TRANSFER with fee_amount → 2 rows (TRANSFER + FEE)."""
+    result = add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    assert result.success, result.error_message
+    assert _count(db) == 2
+
+
+def test_transfer_with_fee_row_types(db):
+    """The two rows must be TRANSFER and FEE."""
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    types = {r.type for r in _rows(db)}
+    assert types == {"TRANSFER", "FEE"}
+
+
+def test_transfer_with_fee_share_same_id(db):
+    """TRANSFER row and FEE row must share the same trade_id."""
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    ids = [r.id for r in _rows(db)]
+    assert len(set(ids)) == 1, f"Expected 1 unique id, got: {set(ids)}"
+
+
+def test_transfer_fee_amount_is_negative(db):
+    """FEE row amount must be negative (outflow)."""
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    fee_rows = [r for r in _rows(db) if r.type == "FEE"]
+    assert len(fee_rows) == 1
+    assert fee_rows[0].amount < 0
+
+
+def test_transfer_fee_amount_value(db):
+    """FEE row amount must equal -abs(fee_amount) exactly."""
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    fee_row = next(r for r in _rows(db) if r.type == "FEE")
+    assert fee_row.amount == Decimal("-0.5902")
+
+
+def test_transfer_amount_unchanged(db):
+    """TRANSFER row amount must be exactly as provided (no sign normalization)."""
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="USDC", amount=Decimal("100"),
+             fee_amount=Decimal("0.5902"), fee_currency="USDC"),
+        db,
+    )
+    transfer_row = next(r for r in _rows(db) if r.type == "TRANSFER")
+    assert transfer_row.amount == Decimal("100")
+
+
+def test_transfer_fee_currency_fallback_to_asset(db):
+    """If fee_currency is not provided, FEE asset falls back to the transfer asset.
+
+    This is the defined fallback: fee_currency missing → use transfer asset.
+    The test explicitly documents this contract so future changes are caught.
+    """
+    add_trade(
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             asset="BTC", currency="BTC",
+             fee_amount=Decimal("0.00005"), fee_currency=None),
+        db,
+    )
+    fee_row = next(r for r in _rows(db) if r.type == "FEE")
+    assert fee_row.asset == "BTC"
+
+
+def test_buy_sell_unaffected_by_transfer_fee_change(db):
+    """BUY still produces 3 rows (base + quote + fee) — existing behavior unchanged."""
+    add_trade(
+        _req(type="BUY", asset="BTC", amount=Decimal("0.5"),
+             currency="EUR", price=Decimal("50000"),
+             fee_amount=Decimal("5"), fee_currency="EUR"),
+        db,
+    )
+    assert _count(db) == 3
+    types = [r.type for r in _rows(db)]
+    assert types.count("BUY") == 2
+    assert types.count("FEE") == 1

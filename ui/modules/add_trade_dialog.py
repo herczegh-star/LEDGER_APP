@@ -151,6 +151,14 @@ def open_add_trade_dialog(
         expand=True,
     )
 
+    fee_hint = ft.Text(
+        "Fee will be stored as a separate FEE row with the same Trade ID.",
+        size=11,
+        color=T_MUT,
+        italic=True,
+        visible=False,
+    )
+
     error_text = ft.Text("", color=RED, size=12)
 
     # ── Dialog reference (needed to close it) ───────────────────────────────
@@ -264,6 +272,20 @@ def open_add_trade_dialog(
         elif tf_total.value.strip():
             _recalc_unit_price()
 
+    def _on_type_change(_e=None) -> None:
+        t = dd_type.value
+        is_transfer = (t == "TRANSFER")
+        is_fee_type = (t == "FEE")
+        fee_hint.visible = is_transfer
+        # FEE type IS the fee — bundled fee fields are not applicable
+        tf_fee_amount.disabled   = is_fee_type
+        tf_fee_currency.disabled = is_fee_type
+        if is_fee_type:
+            tf_fee_amount.value   = ""
+            tf_fee_currency.value = ""
+        page.update()
+
+    dd_type.on_change        = _on_type_change
     tf_price.on_change       = _recalc_total
     tf_total.on_change       = _recalc_unit_price
     tf_base_amount.on_change = _recalc_on_amount
@@ -276,6 +298,7 @@ def open_add_trade_dialog(
             ft.Row([tf_currency, tf_price, tf_total], spacing=12),
             tf_venue,
             ft.Row([tf_fee_amount, tf_fee_currency], spacing=12),
+            fee_hint,
             tf_note,
             error_text,
         ],

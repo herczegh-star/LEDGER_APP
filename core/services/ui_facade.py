@@ -504,7 +504,29 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             venue=venue,
             note=request.note,
         )
-        counts = store.import_rows([row])
+        rows_to_insert = [row]
+
+        # TRANSFER with fee → second FEE row sharing the same trade_id.
+        # FEE type itself never gets a bundled fee row (it IS the fee).
+        if request.type == "TRANSFER" and request.fee_amount is not None:
+            fee_asset = (
+                request.fee_currency.upper().strip()
+                if request.fee_currency
+                else asset          # fallback: same asset as the transfer
+            )
+            rows_to_insert.append(RawRow(
+                id=canonical_id,
+                timestamp=request.timestamp,
+                type="FEE",
+                asset=fee_asset,
+                amount=-abs(request.fee_amount),   # always outflow
+                currency=fee_asset,
+                price=Decimal("1"),
+                venue=venue,
+                note=request.note,
+            ))
+
+        counts = store.import_rows(rows_to_insert)
     finally:
         store.close()
 
