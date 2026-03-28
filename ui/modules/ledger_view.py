@@ -230,7 +230,7 @@ def build_ledger_view(
         border=ft.border.only(bottom=ft.BorderSide(2, BORDER)),
     )
 
-    data_col  = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
+    data_col  = ft.Column([], spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
     table_area = ft.Column([header_row, data_col], expand=True)
 
     _PAGE_SIZE = 50
@@ -381,58 +381,88 @@ def build_ledger_view(
         start = _page_idx[0] * _PAGE_SIZE
         page_rows = visible[start: start + _PAGE_SIZE]
 
-        # ── Data rows (custom Rows — header is fixed above data_col) ─────────────
+        # ── Group consecutive rows by trade id ───────────────────────────────────
+        # Rows with the same id belong to one trade (double-entry pair / group).
+        # Each group is rendered as a single bordered block.
+        groups: list = []
+        for row in page_rows:
+            if groups and groups[-1][0] == row.id:
+                groups[-1][1].append(row)
+            else:
+                groups.append([row.id, [row]])
+
+        # ── Data rows (grouped into transaction blocks) ───────────────────────────
+        _GROUP_BORDER = "#4e5d6c"   # light gray — visible on dark bg, not aggressive
+        _ROW_SEP      = "#1e2a38"   # inner separator between rows within a group
+
         row_widgets = []
-        for i, row in enumerate(page_rows):
-            type_color   = _TYPE_COLORS.get(row.type, T_MUT)
-            amt_color    = GREEN if row.amount > _ZERO else (RED if row.amount < _ZERO else T_MUT)
-            ts_str       = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
-            note_display = (row.note or "")[:30] + ("…" if len(row.note or "") > 30 else "")
-            tid = row.id
+        for group_id, group_rows in groups:
+            inner = []
+            for j, row in enumerate(group_rows):
+                type_color   = _TYPE_COLORS.get(row.type, T_MUT)
+                amt_color    = GREEN if row.amount > _ZERO else (RED if row.amount < _ZERO else T_MUT)
+                ts_str       = row.timestamp.strftime("%Y-%m-%d %H:%M:%S") if row.timestamp else "—"
+                note_display = (row.note or "")[:30] + ("…" if len(row.note or "") > 30 else "")
+                tid = row.id
 
-            def _make_reverse_cb(t: str) -> Callable:
-                def _cb(_e=None) -> None:
-                    _confirm_reverse(t, run_rows)
-                return _cb
+                def _make_reverse_cb(t: str) -> Callable:
+                    def _cb(_e=None) -> None:
+                        _confirm_reverse(t, run_rows)
+                    return _cb
 
-            def _make_delete_cb(t: str) -> Callable:
-                def _cb(_e=None) -> None:
-                    _confirm_delete(t, run_rows)
-                return _cb
+                def _make_delete_cb(t: str) -> Callable:
+                    def _cb(_e=None) -> None:
+                        _confirm_delete(t, run_rows)
+                    return _cb
 
-            btns = []
-            if row.type != "REVERSAL" and row.id and row.id not in reversed_ids:
-                btns.append(ft.TextButton(
-                    "Reverse",
-                    on_click=_make_reverse_cb(tid),
-                    style=ft.ButtonStyle(color=ORANGE, padding=ft.padding.symmetric(0, 4)),
+                btns = []
+                if row.type != "REVERSAL" and row.id and row.id not in reversed_ids:
+                    btns.append(ft.TextButton(
+                        "Reverse",
+                        on_click=_make_reverse_cb(tid),
+                        style=ft.ButtonStyle(color=T_MUT, padding=ft.padding.symmetric(0, 4)),
+                    ))
+                if row.id:
+                    btns.append(ft.IconButton(
+                        ft.Icons.MORE_VERT,
+                        on_click=_make_delete_cb(tid),
+                        icon_color=T_MUT,
+                        icon_size=16,
+                        tooltip="Smazat záznam",
+                        style=ft.ButtonStyle(padding=ft.padding.all(4)),
+                    ))
+
+                # Thin separator between rows inside the group (not after the last)
+                row_border = (
+                    ft.border.only(bottom=ft.BorderSide(1, _ROW_SEP))
+                    if j < len(group_rows) - 1
+                    else None
+                )
+                inner.append(ft.Container(
+                    content=ft.Row([
+                        _dcell(ts_str,                   _CW[0], T_MUT,       mono=True),
+                        _dcell(row.type,                 _CW[1], type_color),
+                        _dcell(row.asset,                _CW[2], T_PRI),
+                        _dcell(_fmt_amount(row.amount),  _CW[3], amt_color,   right=True, mono=True),
+                        _dcell(row.currency or "—",      _CW[4], T_MUT),
+                        _dcell(_short_id(row.id),        _CW[5], T_MUT,       mono=True),
+                        _dcell(row.venue or "—",         _CW[6], T_MUT),
+                        _dcell(note_display or "—",      _CW[7], T_MUT),
+                        ft.Container(
+                            content=ft.Row(btns, spacing=0, tight=True),
+                            width=_CW[8],
+                        ),
+                    ], spacing=0),
+                    border=row_border,
+                    padding=ft.padding.symmetric(9, 8),
                 ))
-            if row.id:
-                btns.append(ft.TextButton(
-                    "Delete",
-                    on_click=_make_delete_cb(tid),
-                    style=ft.ButtonStyle(color=RED, padding=ft.padding.symmetric(0, 4)),
-                ))
 
-            row_bg = "#0f1621" if i % 2 == 0 else BG_CARD
             row_widgets.append(ft.Container(
-                content=ft.Row([
-                    _dcell(ts_str,                   _CW[0], T_MUT,       mono=True),
-                    _dcell(row.type,                 _CW[1], type_color),
-                    _dcell(row.asset,                _CW[2], T_PRI),
-                    _dcell(_fmt_amount(row.amount),  _CW[3], amt_color,   right=True, mono=True),
-                    _dcell(row.currency or "—",      _CW[4], T_MUT),
-                    _dcell(_short_id(row.id),        _CW[5], T_MUT,       mono=True),
-                    _dcell(row.venue or "—",         _CW[6], T_MUT),
-                    _dcell(note_display or "—",      _CW[7], T_MUT),
-                    ft.Container(
-                        content=ft.Row(btns, spacing=0, tight=True),
-                        width=_CW[8],
-                    ),
-                ], spacing=0),
-                bgcolor=row_bg,
-                border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
-                padding=ft.padding.symmetric(9, 8),
+                content=ft.Column(inner, spacing=0),
+                bgcolor=BG_CARD,
+                border=ft.border.all(1, _GROUP_BORDER),
+                border_radius=7,
+                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             ))
 
         data_col.controls = row_widgets
