@@ -142,6 +142,8 @@ class AddTradeRequestDTO:
     fee_currency: Optional[str] = None
     note: Optional[str] = None
     to_venue: Optional[str] = None          # destination venue — required for TRANSFER
+    to_asset: Optional[str] = None          # SWAP only: asset being received
+    received_amount: Optional[Decimal] = None  # SWAP only: amount of to_asset received
 
 
 @dataclass
@@ -388,6 +390,93 @@ def get_dashboard_snapshot(
     )
 
 
+def _add_swap(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
+    """Decompose a SWAP into SELL + BUY + optional FEE rows (all share one canonical_id)."""
+    from_asset = (request.asset    or "").upper().strip()
+    to_asset   = (request.to_asset or "").upper().strip()
+    venue      = (request.venue    or "").lower().strip()
+
+    if not from_asset:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="asset (from_asset) must not be empty")
+    if not to_asset:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="to_asset is required for SWAP")
+    if from_asset == to_asset:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="to_asset must differ from asset (from_asset)")
+    if not venue:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="venue must not be empty")
+    if request.amount == _ZERO:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="from amount must not be zero")
+
+    received = request.received_amount
+    if received is None or received <= _ZERO:
+        return AddTradeResultDTO(success=False, n_rows_added=0,
+                                 error_message="received_amount must be > 0 for SWAP")
+
+    from_amount   = abs(request.amount)
+    exchange_rate = received / from_amount
+
+    swap_note = f"SWAP: {from_asset}->{to_asset}"
+    if request.note:
+        swap_note = f"{swap_note} | {request.note}"
+
+    store = LedgerStore(db_path)
+    try:
+        canonical_id = generate_canonical_id(request.timestamp, venue, "SWAP", store.conn)
+
+        row_sell = RawRow(
+            id=canonical_id,
+            timestamp=request.timestamp,
+            type="SELL",
+            asset=from_asset,
+            amount=-from_amount,
+            currency=to_asset,
+            price=exchange_rate,
+            venue=venue,
+            note=swap_note,
+        )
+        row_buy = RawRow(
+            id=canonical_id,
+            timestamp=request.timestamp,
+            type="BUY",
+            asset=to_asset,
+            amount=+received,
+            currency=to_asset,
+            price=Decimal("1"),
+            venue=venue,
+            note=swap_note,
+        )
+        rows_to_insert = [row_sell, row_buy]
+
+        if request.fee_amount is not None and request.fee_amount > _ZERO:
+            fee_asset = (
+                request.fee_currency.upper().strip()
+                if request.fee_currency
+                else to_asset
+            )
+            rows_to_insert.append(RawRow(
+                id=canonical_id,
+                timestamp=request.timestamp,
+                type="FEE",
+                asset=fee_asset,
+                amount=-abs(request.fee_amount),
+                currency=fee_asset,
+                price=Decimal("1"),
+                venue=venue,
+                note=swap_note,
+            ))
+
+        counts = store.import_rows(rows_to_insert)
+    finally:
+        store.close()
+
+    return AddTradeResultDTO(success=True, n_rows_added=counts["inserted"])
+
+
 def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
     """Validate, normalize, and append a trade to the ledger.
 
@@ -408,6 +497,10 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
 
     Never raises — all errors captured in AddTradeResultDTO.error_message.
     """
+    # ── 0. SWAP — handled before generic type validation (UX-only type) ──────
+    if request.type == "SWAP":
+        return _add_swap(request, db_path)
+
     # ── 1. Type ───────────────────────────────────────────────────────────────
     if request.type not in TRADE_TYPES:
         return AddTradeResultDTO(
