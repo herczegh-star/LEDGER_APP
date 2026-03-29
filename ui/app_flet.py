@@ -134,7 +134,7 @@ def _main_view_impl(page: ft.Page) -> None:
         _blog(f"TIMING +{ms:7.1f}ms  {label}")
 
     # ── Page base settings (must precede first page.add) ──────────────────────
-    page.title = "LedgerApp 1.0.0"
+    page.title = "CryptoLedger"
     page.bgcolor = BG
     page.theme_mode = ft.ThemeMode.DARK
     page.padding = 0
@@ -596,7 +596,16 @@ def _main_view_impl(page: ft.Page) -> None:
     _header = ft.Container(
         content=ft.Row(
             [
-                ft.Text("LedgerApp 1.0.0", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+                ft.Container(
+                    content=ft.Image(
+                        src="logo_cryptoledger_full.png",
+                        height=42,
+                        fit=ft.BoxFit.CONTAIN,
+                    ),
+                    bgcolor="#000000",
+                    border_radius=4,
+                    padding=ft.padding.symmetric(0, 6),
+                ),
                 ft.Row(
                     [
                         _eye_btn,
@@ -726,6 +735,10 @@ def run_ui() -> None:
     _splash_dst = icon_service.USER_DATA_DIR / "splash.gif"
     if _splash_src.exists() and not _splash_dst.exists():
         _splash_dst.write_bytes(_splash_src.read_bytes())
+    _logo_src = Path(__file__).parent.parent / "assets" / "logo_cryptoledger_full.png"
+    _logo_dst = icon_service.USER_DATA_DIR / "logo_cryptoledger_full.png"
+    if _logo_src.exists():
+        _logo_dst.write_bytes(_logo_src.read_bytes())
     ft.run(main_view, assets_dir=_assets_dir)
     _blog("CHECKPOINT 3b - ft.run returned (window closed)")
 

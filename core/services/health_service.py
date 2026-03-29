@@ -136,12 +136,46 @@ def health_report(
         if row.type in _INVESTMENT_TYPES:
             groups[row.id or ""].append(row)
 
+    def _is_valid_swap(non_fiat_rows: list) -> bool:
+        """Return True iff the rows form a valid 1:1 crypto↔crypto swap.
+
+        Conditions (all must hold):
+          - at least one valid outflow leg: SELL amount<0 or REVERSAL amount<0
+          - at least one valid inflow leg:  BUY  amount>0 or REVERSAL amount>0
+          - exactly 1 unique outflow asset
+          - exactly 1 unique inflow asset
+          - outflow asset != inflow asset
+        FEE rows are never present here (excluded by _INVESTMENT_TYPES grouping).
+        Multi-leg / routing patterns (>1 asset on either side) intentionally fail.
+        """
+        outflow_legs = [
+            r for r in non_fiat_rows
+            if (r.type == "SELL"     and r.amount < 0)
+            or (r.type == "REVERSAL" and r.amount < 0)
+        ]
+        inflow_legs = [
+            r for r in non_fiat_rows
+            if (r.type == "BUY"      and r.amount > 0)
+            or (r.type == "REVERSAL" and r.amount > 0)
+        ]
+
+        if not outflow_legs or not inflow_legs:
+            return False
+
+        outflow_assets = {r.asset.upper() for r in outflow_legs}
+        inflow_assets  = {r.asset.upper() for r in inflow_legs}
+
+        if len(outflow_assets) != 1 or len(inflow_assets) != 1:
+            return False
+
+        return outflow_assets.isdisjoint(inflow_assets)
+
     for trade_id, trade_rows in sorted(groups.items()):
         fiat_rows     = [r for r in trade_rows if r.asset.upper() in fiat_set]
         non_fiat_rows = [r for r in trade_rows if r.asset.upper() not in fiat_set]
 
         # ── Check 1: Missing quote leg ────────────────────────────────────────
-        if non_fiat_rows and not fiat_rows:
+        if non_fiat_rows and not fiat_rows and not _is_valid_swap(non_fiat_rows):
             first = non_fiat_rows[0]
             issues.append(_issue(
                 severity=ERROR,
