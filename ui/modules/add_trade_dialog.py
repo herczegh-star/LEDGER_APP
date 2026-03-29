@@ -266,7 +266,7 @@ def open_add_trade_dialog(
                 )
             ]
         else:
-            _COL_W = [55, 65, 110, 80, 100, 75]
+            _COL_W = [50, 55, 100, 70, 85, 70]
             _HDRS  = ["TYPE", "ASSET", "AMOUNT", "CURRENCY", "PRICE", "VENUE"]
             _TYPE_COLOR = {"SELL": RED, "BUY": GREEN, "FEE": T_MUT}
 
