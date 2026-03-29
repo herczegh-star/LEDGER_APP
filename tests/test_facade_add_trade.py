@@ -103,28 +103,32 @@ def test_sell_price_zero_nothing_written(db):
 
 def test_transfer_price_zero_ok(db):
     result = add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None, currency="BTC"),
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="BTC", to_venue="trezor"),
         db,
     )
     assert result.success, result.error_message
     assert result.n_rows_added > 0
 
 
-def test_transfer_price_zero_writes_one_row(db):
+def test_transfer_price_zero_writes_two_rows(db):
+    """TRANSFER 2.0: price=0 TRANSFER creates 2 rows (outflow + inflow)."""
     add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None, currency="BTC"),
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="BTC", to_venue="trezor"),
         db,
     )
-    assert _count(db) == 1
+    assert _count(db) == 2
 
 
 def test_transfer_price_zero_row_type_correct(db):
     add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None, currency="BTC"),
+        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
+             currency="BTC", to_venue="trezor"),
         db,
     )
-    row = _rows(db)[0]
-    assert row.type == "TRANSFER"
+    types = {r.type for r in _rows(db)}
+    assert types == {"TRANSFER"}
 
 
 def test_fee_price_zero_ok(db):
@@ -317,103 +321,202 @@ def test_reverse_trade_unknown_id_raises(db):
 
 # ── TRANSFER + fee ─────────────────────────────────────────────────────────────
 
-def test_transfer_without_fee_writes_one_row(db):
-    """TRANSFER without fee_amount → exactly 1 row."""
-    result = add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=None),
-        db,
+# ── TRANSFER 2.0 — two explicit rows ──────────────────────────────────────────
+
+def _transfer_req(**overrides):
+    """Minimal valid TRANSFER request with to_venue."""
+    defaults = dict(
+        type="TRANSFER",
+        timestamp=_TS,
+        asset="BTC",
+        amount=Decimal("0.4"),
+        currency="BTC",
+        price=Decimal("0"),
+        venue="anycoin",
+        to_venue="trezor",
+        fee_amount=None,
+        fee_currency=None,
     )
-    assert result.success, result.error_message
-    assert _count(db) == 1
+    defaults.update(overrides)
+    return AddTradeRequestDTO(**defaults)
 
 
-def test_transfer_with_fee_writes_two_rows(db):
-    """TRANSFER with fee_amount → 2 rows (TRANSFER + FEE)."""
-    result = add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
+def test_transfer_creates_two_rows(db):
+    """TRANSFER without fee → exactly 2 rows (outflow + inflow)."""
+    result = add_trade(_transfer_req(), db)
     assert result.success, result.error_message
     assert _count(db) == 2
 
 
+def test_transfer_outflow_negative(db):
+    """Source row must have negative amount (outflow)."""
+    add_trade(_transfer_req(), db)
+    source = next(r for r in _rows(db) if r.venue == "anycoin")
+    assert source.amount == Decimal("-0.4")
+
+
+def test_transfer_inflow_positive(db):
+    """Destination row must have positive amount (inflow)."""
+    add_trade(_transfer_req(), db)
+    dest = next(r for r in _rows(db) if r.venue == "trezor")
+    assert dest.amount == Decimal("0.4")
+
+
+def test_transfer_rows_share_id(db):
+    """Both TRANSFER rows must share the same trade_id."""
+    add_trade(_transfer_req(), db)
+    ids = {r.id for r in _rows(db)}
+    assert len(ids) == 1
+
+
+def test_transfer_both_rows_type_transfer(db):
+    """Both rows must have type TRANSFER."""
+    add_trade(_transfer_req(), db)
+    types = [r.type for r in _rows(db)]
+    assert all(t == "TRANSFER" for t in types)
+
+
+def test_transfer_with_fee_creates_three_rows(db):
+    """TRANSFER with fee → 3 rows (outflow + inflow + FEE)."""
+    result = add_trade(_transfer_req(fee_amount=Decimal("0.0001"), fee_currency="BTC"), db)
+    assert result.success, result.error_message
+    assert _count(db) == 3
+
+
 def test_transfer_with_fee_row_types(db):
-    """The two rows must be TRANSFER and FEE."""
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
-    types = {r.type for r in _rows(db)}
-    assert types == {"TRANSFER", "FEE"}
+    """Three rows: 2x TRANSFER, 1x FEE."""
+    add_trade(_transfer_req(fee_amount=Decimal("0.0001"), fee_currency="BTC"), db)
+    types = [r.type for r in _rows(db)]
+    assert types.count("TRANSFER") == 2
+    assert types.count("FEE") == 1
 
 
-def test_transfer_with_fee_share_same_id(db):
-    """TRANSFER row and FEE row must share the same trade_id."""
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
-    ids = [r.id for r in _rows(db)]
-    assert len(set(ids)) == 1, f"Expected 1 unique id, got: {set(ids)}"
-
-
-def test_transfer_fee_amount_is_negative(db):
-    """FEE row amount must be negative (outflow)."""
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
-    fee_rows = [r for r in _rows(db) if r.type == "FEE"]
-    assert len(fee_rows) == 1
-    assert fee_rows[0].amount < 0
-
-
-def test_transfer_fee_amount_value(db):
-    """FEE row amount must equal -abs(fee_amount) exactly."""
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
+def test_transfer_fee_on_source_venue(db):
+    """FEE row must be on the source venue (from_venue), not destination."""
+    add_trade(_transfer_req(fee_amount=Decimal("0.0001"), fee_currency="BTC"), db)
     fee_row = next(r for r in _rows(db) if r.type == "FEE")
-    assert fee_row.amount == Decimal("-0.5902")
+    assert fee_row.venue == "anycoin"
 
 
-def test_transfer_amount_unchanged(db):
-    """TRANSFER row amount must be exactly as provided (no sign normalization)."""
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             currency="USDC", amount=Decimal("100"),
-             fee_amount=Decimal("0.5902"), fee_currency="USDC"),
-        db,
-    )
-    transfer_row = next(r for r in _rows(db) if r.type == "TRANSFER")
-    assert transfer_row.amount == Decimal("100")
+def test_transfer_fee_amount_negative(db):
+    """FEE row amount must be negative (outflow)."""
+    add_trade(_transfer_req(fee_amount=Decimal("0.0001"), fee_currency="BTC"), db)
+    fee_row = next(r for r in _rows(db) if r.type == "FEE")
+    assert fee_row.amount == Decimal("-0.0001")
 
 
-def test_transfer_fee_currency_fallback_to_asset(db):
-    """If fee_currency is not provided, FEE asset falls back to the transfer asset.
-
-    This is the defined fallback: fee_currency missing → use transfer asset.
-    The test explicitly documents this contract so future changes are caught.
-    """
-    add_trade(
-        _req(type="TRANSFER", price=Decimal("0"), quote_amount=None,
-             asset="BTC", currency="BTC",
-             fee_amount=Decimal("0.00005"), fee_currency=None),
-        db,
-    )
+def test_transfer_fee_currency_fallback(db):
+    """fee_currency missing → FEE asset inherits transfer asset."""
+    add_trade(_transfer_req(fee_amount=Decimal("0.0001"), fee_currency=None), db)
     fee_row = next(r for r in _rows(db) if r.type == "FEE")
     assert fee_row.asset == "BTC"
 
 
-def test_buy_sell_unaffected_by_transfer_fee_change(db):
-    """BUY still produces 3 rows (base + quote + fee) — existing behavior unchanged."""
+def test_transfer_amount_normalized(db):
+    """Facade normalizes amount: outflow = -abs, inflow = +abs."""
+    # User might enter positive amount — facade must still produce correct signs.
+    add_trade(_transfer_req(amount=Decimal("0.4")), db)
+    amounts = sorted(r.amount for r in _rows(db))
+    assert amounts == [Decimal("-0.4"), Decimal("0.4")]
+
+
+def test_transfer_to_venue_required(db):
+    """TRANSFER without to_venue must fail."""
+    result = add_trade(_transfer_req(to_venue=None), db)
+    assert not result.success
+    assert _count(db) == 0
+
+
+def test_transfer_same_venue_fails(db):
+    """from_venue == to_venue must be rejected."""
+    result = add_trade(_transfer_req(venue="anycoin", to_venue="anycoin"), db)
+    assert not result.success
+    assert _count(db) == 0
+
+
+def test_transfer_sum_invariant(db):
+    """Sum of all TRANSFER amounts for an asset must equal zero."""
+    add_trade(_transfer_req(), db)
+    transfer_rows = [r for r in _rows(db) if r.type == "TRANSFER"]
+    total = sum(r.amount for r in transfer_rows)
+    assert total == Decimal("0")
+
+
+def test_transfer_note_not_used_for_routing(db):
+    """Note is irrelevant to routing — destination comes only from to_venue."""
+    add_trade(_transfer_req(note="some random text"), db)
+    dest = next(r for r in _rows(db) if r.venue == "trezor")
+    assert dest is not None   # destination row exists from to_venue, not from note
+    assert dest.note == "some random text"   # note passes through unchanged
+
+
+def test_transfer_holdings_source_decreases(db):
+    """After BUY + TRANSFER, source venue quantity decreases."""
+    from core.reports.holdings import compute_venue_holdings
+    from core.ledger_store import LedgerStore as _Store
+
+    add_trade(_req(type="BUY", asset="BTC", amount=Decimal("1"),
+                   currency="EUR", price=Decimal("20000"), venue="anycoin"), db)
+    add_trade(_transfer_req(amount=Decimal("0.4")), db)
+
+    store = _Store(db)
+    try:
+        rows = store.timeline()
+    finally:
+        store.close()
+
+    h = compute_venue_holdings(rows)
+    assert h["anycoin"]["BTC"] == Decimal("0.6")
+
+
+def test_transfer_holdings_destination_increases(db):
+    """After BUY + TRANSFER, destination venue receives the quantity."""
+    from core.reports.holdings import compute_venue_holdings
+    from core.ledger_store import LedgerStore as _Store
+
+    add_trade(_req(type="BUY", asset="BTC", amount=Decimal("1"),
+                   currency="EUR", price=Decimal("20000"), venue="anycoin"), db)
+    add_trade(_transfer_req(amount=Decimal("0.4")), db)
+
+    store = _Store(db)
+    try:
+        rows = store.timeline()
+    finally:
+        store.close()
+
+    h = compute_venue_holdings(rows)
+    assert h["trezor"]["BTC"] == Decimal("0.4")
+
+
+def test_transfer_global_wac_unchanged(db):
+    """Global WAC must not change after a TRANSFER."""
+    from core.reports.positions import compute_positions
+    from core.ledger_store import LedgerStore as _Store
+
+    add_trade(_req(type="BUY", asset="BTC", amount=Decimal("1"),
+                   currency="EUR", price=Decimal("20000"), venue="anycoin"), db)
+
+    store = _Store(db)
+    try:
+        rows_before = store.timeline()
+    finally:
+        store.close()
+    wac_before = {p.asset: p.wac for p in compute_positions(rows_before)}
+
+    add_trade(_transfer_req(amount=Decimal("0.4")), db)
+
+    store = _Store(db)
+    try:
+        rows_after = store.timeline()
+    finally:
+        store.close()
+    wac_after = {p.asset: p.wac for p in compute_positions(rows_after)}
+
+    assert wac_before["BTC"] == wac_after["BTC"]
+
+
+def test_buy_sell_regression_unaffected(db):
+    """BUY still produces 3 rows (base + quote + fee) — no regression."""
     add_trade(
         _req(type="BUY", asset="BTC", amount=Decimal("0.5"),
              currency="EUR", price=Decimal("50000"),

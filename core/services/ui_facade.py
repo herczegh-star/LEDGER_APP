@@ -141,6 +141,7 @@ class AddTradeRequestDTO:
     fee_amount: Optional[Decimal] = None
     fee_currency: Optional[str] = None
     note: Optional[str] = None
+    to_venue: Optional[str] = None          # destination venue — required for TRANSFER
 
 
 @dataclass
@@ -249,6 +250,14 @@ def get_dashboard_snapshot(
     from core.reports.holdings import compute_venue_holdings
     all_holdings = compute_venue_holdings(rows, _FIAT_DEFAULT)
 
+    # ── Global WAC map — used as fallback for transfer-only (wallet) venues ───
+    # WAC is a global invariant: transferring an asset does not change its unit
+    # cost.  Venues that received assets only via TRANSFER have no BUY rows and
+    # therefore no WAC position; we inherit the global WAC for display purposes.
+    global_wac_map: Dict[str, Decimal] = {
+        pos.asset: pos.wac for pos in raw_positions if pos.wac > _ZERO
+    }
+
     # ── Per-venue breakdown ───────────────────────────────────────────────────
     venues = sorted({r.venue for r in rows} | set(all_holdings.keys()))
     by_venue: Dict[str, VenueDashboardDTO] = {}
@@ -289,18 +298,45 @@ def get_dashboard_snapshot(
 
         venue_holdings = all_holdings.get(venue, {})
 
-        # Wallet-only venue (TRANSFER-in only): WAC positions are empty but holdings exist.
-        # Compute value directly from physical holdings × spot price.
-        if venue_value is None and venue_holdings and prices_map:
-            holding_vals = [
-                qty * prices_map[asset]
-                for asset, qty in venue_holdings.items()
-                if qty > _ZERO and prices_map.get(asset) is not None
-            ]
-            if holding_vals:
-                venue_value = sum(holding_vals, _ZERO)
+        # ── WAC fallback for transfer-only assets (pure-wallet and mixed venues) ─
+        # A venue that received assets only via TRANSFER has no BUY rows, so
+        # compute_positions() returns nothing for those assets.  We synthesise
+        # PositionDTOs using the global WAC (which is unchanged by transfers) so
+        # that Avg Buy / Net Invested are shown correctly on the destination venue.
+        # This covers both:
+        #   - pure wallet venues  (venue_positions is empty)
+        #   - mixed venues        (venue_positions has WAC assets but a
+        #                          transfer-only asset is absent from it)
+        position_assets = {p.asset for p in venue_positions}
+        for h_asset, h_qty in venue_holdings.items():
+            if h_qty <= _ZERO:
+                continue
+            if h_asset in position_assets:
+                continue                     # already covered by WAC engine
+            g_wac = global_wac_map.get(h_asset, _ZERO)
+            inherited_cost = g_wac * h_qty
+            vp = PositionDTO(
+                asset=h_asset,
+                quantity=h_qty,
+                wac=g_wac,
+                cost_basis=inherited_cost,
+                realized_pnl=_ZERO,
+            )
+            if prices_map:
+                spot = prices_map.get(h_asset)
+                vp.spot_price = spot
+                if spot is not None:
+                    vp.value = h_qty * spot
+                    if inherited_cost > _ZERO:
+                        vp.unrealized_pnl = vp.value - inherited_cost
+                        vp.roi_total = vp.unrealized_pnl / inherited_cost
+            venue_positions.append(vp)
+        # Recompute totals whenever fallback positions were added
+        cost_basis_total = sum((p.cost_basis for p in venue_positions), _ZERO)
+        venue_vals = [p.value for p in venue_positions if p.value is not None]
+        venue_value = sum(venue_vals, _ZERO) if venue_vals else None
 
-        # Only show unrealized PnL when there is a real cost basis (not wallet-only).
+        # Only show unrealized PnL when there is a real cost basis.
         venue_unr = (
             (venue_value - cost_basis_total)
             if venue_value is not None and cost_basis_total > _ZERO
@@ -464,7 +500,7 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
 
         return AddTradeResultDTO(success=True, n_rows_added=result.inserted)
 
-    # ── 5. TRANSFER / FEE — single raw row ────────────────────────────────────
+    # ── 5. TRANSFER / FEE ─────────────────────────────────────────────────────
     # price >= 0; 0 is explicitly allowed for TRANSFER (no market price).
     price: Decimal = request.price if request.price is not None else _ZERO
     if price < _ZERO:
@@ -490,41 +526,86 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             ),
         )
 
+    # ── TRANSFER-specific validation ──────────────────────────────────────────
+    if request.type == "TRANSFER":
+        to_venue_raw = (request.to_venue or "").strip().lower()
+        if not to_venue_raw:
+            return AddTradeResultDTO(
+                success=False, n_rows_added=0,
+                error_message="to_venue is required for TRANSFER",
+            )
+        if to_venue_raw == venue:
+            return AddTradeResultDTO(
+                success=False, n_rows_added=0,
+                error_message=f"to_venue must differ from venue (both are {venue!r})",
+            )
+    else:
+        to_venue_raw = ""
+
     store = LedgerStore(db_path)
     try:
         canonical_id = generate_canonical_id(request.timestamp, venue, request.type, store.conn)
-        row = RawRow(
-            id=canonical_id,
-            timestamp=request.timestamp,
-            type=request.type,
-            asset=asset,
-            amount=request.amount,       # signed as-is (caller controls direction)
-            currency=eff_currency,
-            price=price,
-            venue=venue,
-            note=request.note,
-        )
-        rows_to_insert = [row]
 
-        # TRANSFER with fee → second FEE row sharing the same trade_id.
-        # FEE type itself never gets a bundled fee row (it IS the fee).
-        if request.type == "TRANSFER" and request.fee_amount is not None:
-            fee_asset = (
-                request.fee_currency.upper().strip()
-                if request.fee_currency
-                else asset          # fallback: same asset as the transfer
-            )
-            rows_to_insert.append(RawRow(
+        if request.type == "TRANSFER":
+            # Two explicit rows: outflow (source) + inflow (destination).
+            # amount is normalized: outflow always negative, inflow always positive.
+            amount_abs = abs(request.amount)
+            row_out = RawRow(
                 id=canonical_id,
                 timestamp=request.timestamp,
-                type="FEE",
-                asset=fee_asset,
-                amount=-abs(request.fee_amount),   # always outflow
-                currency=fee_asset,
-                price=Decimal("1"),
+                type="TRANSFER",
+                asset=asset,
+                amount=-amount_abs,
+                currency=eff_currency,
+                price=price,
                 venue=venue,
                 note=request.note,
-            ))
+            )
+            row_in = RawRow(
+                id=canonical_id,
+                timestamp=request.timestamp,
+                type="TRANSFER",
+                asset=asset,
+                amount=+amount_abs,
+                currency=eff_currency,
+                price=price,
+                venue=to_venue_raw,
+                note=request.note,
+            )
+            rows_to_insert = [row_out, row_in]
+
+            # Optional FEE row — always on source venue (from_venue)
+            if request.fee_amount is not None:
+                fee_asset = (
+                    request.fee_currency.upper().strip()
+                    if request.fee_currency
+                    else asset
+                )
+                rows_to_insert.append(RawRow(
+                    id=canonical_id,
+                    timestamp=request.timestamp,
+                    type="FEE",
+                    asset=fee_asset,
+                    amount=-abs(request.fee_amount),
+                    currency=fee_asset,
+                    price=Decimal("1"),
+                    venue=venue,
+                    note=request.note,
+                ))
+        else:
+            # FEE and other single-row types
+            row = RawRow(
+                id=canonical_id,
+                timestamp=request.timestamp,
+                type=request.type,
+                asset=asset,
+                amount=request.amount,       # signed as-is (caller controls direction)
+                currency=eff_currency,
+                price=price,
+                venue=venue,
+                note=request.note,
+            )
+            rows_to_insert = [row]
 
         counts = store.import_rows(rows_to_insert)
     finally:

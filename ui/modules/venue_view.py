@@ -199,10 +199,32 @@ def build_venue_view(
         if vdto and vdto.positions:
             # Normal venue: use venue-specific WAC positions; physical qty as secondary stat
             physical_qtys = {a: q for a, q in vdto.holdings.items() if q > _ZERO}
-            return [
+            position_assets = {p.asset for p in vdto.positions}
+            cards = [
                 make_card(p, physical_qty=physical_qtys.get(p.asset))
                 for p in sorted(vdto.positions, key=lambda p: p.asset)
             ]
+            # Mixed venue: also render assets present only in holdings (e.g. via TRANSFER)
+            global_by_asset = {p.asset: p for p in raw}
+            for asset in sorted(vdto.holdings):
+                if asset in position_assets:
+                    continue
+                qty = vdto.holdings[asset]
+                if qty <= _ZERO:
+                    continue
+                g = global_by_asset.get(asset)
+                spot = g.spot_price if g else None
+                wallet_p = PositionDTO(
+                    asset=asset,
+                    quantity=qty,
+                    wac=_ZERO,
+                    cost_basis=_ZERO,
+                    realized_pnl=_ZERO,
+                    spot_price=spot,
+                    value=(qty * spot) if spot is not None else None,
+                )
+                cards.append(make_card(wallet_p, wallet_only=True))
+            return cards
 
         elif vdto and vdto.holdings:
             # Wallet-only venue: synthesise PositionDTOs from physical holdings

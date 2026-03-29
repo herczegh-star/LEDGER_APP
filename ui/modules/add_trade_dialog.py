@@ -122,6 +122,17 @@ def open_add_trade_dialog(
         expand=True,
     )
 
+    tf_to_venue = ft.TextField(
+        label="To Venue",
+        hint_text="trezor",
+        bgcolor=BG_CARD,
+        border_color=BORDER,
+        color=T_PRI,
+        label_style=ft.TextStyle(color=T_MUT),
+        expand=True,
+        visible=False,
+    )
+
     tf_fee_amount = ft.TextField(
         label="Fee Amount (optional)",
         hint_text="5",
@@ -209,6 +220,18 @@ def open_add_trade_dialog(
 
         fee_currency: "str | None" = tf_fee_currency.value.strip() or None
 
+        # To Venue — required for TRANSFER, ignored for all other types
+        to_venue_raw = tf_to_venue.value.strip() if dd_type.value == "TRANSFER" else ""
+        if dd_type.value == "TRANSFER":
+            if not to_venue_raw:
+                error_text.value = "To Venue is required for TRANSFER"
+                page.update()
+                return
+            if to_venue_raw.lower() == tf_venue.value.strip().lower():
+                error_text.value = "To Venue must differ from From Venue"
+                page.update()
+                return
+
         request = AddTradeRequestDTO(
             type=dd_type.value,
             timestamp=ts,
@@ -221,6 +244,7 @@ def open_add_trade_dialog(
             fee_currency=fee_currency,
             note=tf_note.value.strip() or None,
             venue=tf_venue.value.strip(),
+            to_venue=to_venue_raw or None,
         )
 
         result = add_trade(request, db_path)
@@ -276,6 +300,10 @@ def open_add_trade_dialog(
         t = dd_type.value
         is_transfer = (t == "TRANSFER")
         is_fee_type = (t == "FEE")
+        # TRANSFER: show To Venue field, rename Venue → From Venue
+        tf_to_venue.visible = is_transfer
+        tf_venue.label = "From Venue" if is_transfer else "Venue"
+        # Fee hint only for TRANSFER (fee row shares trade_id)
         fee_hint.visible = is_transfer
         # FEE type IS the fee — bundled fee fields are not applicable
         tf_fee_amount.disabled   = is_fee_type
@@ -285,7 +313,7 @@ def open_add_trade_dialog(
             tf_fee_currency.value = ""
         page.update()
 
-    dd_type.on_change        = _on_type_change
+    dd_type.on_select        = _on_type_change
     tf_price.on_change       = _recalc_total
     tf_total.on_change       = _recalc_unit_price
     tf_base_amount.on_change = _recalc_on_amount
@@ -297,6 +325,7 @@ def open_add_trade_dialog(
             ft.Row([tf_base_asset, tf_base_amount], spacing=12),
             ft.Row([tf_currency, tf_price, tf_total], spacing=12),
             tf_venue,
+            tf_to_venue,
             ft.Row([tf_fee_amount, tf_fee_currency], spacing=12),
             fee_hint,
             tf_note,

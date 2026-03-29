@@ -48,20 +48,18 @@ def compute_venue_holdings(
             quantity += row.amount  (same sign semantics as WAC engine)
         TRANSFER (outflow, amount < 0):
             source venue: quantity += row.amount  (negative = reduce)
-            if row.note is a plain venue name → destination venue: quantity += abs(row.amount)
         TRANSFER (inflow, amount > 0):
-            quantity += row.amount  (explicit inflow row, no note needed)
-        FEE:
-            ignored (fee does not change asset holdings position)
+            destination venue: quantity += row.amount  (explicit ledger row)
+        FEE (crypto):
+            quantity += row.amount  (reduces balance; fiat FEE ignored)
         Fiat assets:
             ignored entirely
 
-    Single-entry TRANSFER convention:
-        One row records the outflow (amount < 0, venue = source, note = destination).
-        compute_venue_holdings() synthesises the matching inflow automatically so
-        the destination venue appears in holdings without a second DB row.
-        A note qualifies as a destination venue when it is non-empty and contains
-        no spaces (i.e. looks like a plain venue identifier, not a sentence).
+    Two-row TRANSFER model:
+        Every TRANSFER is stored as two explicit DB rows sharing the same id:
+            outflow: amount < 0, venue = source
+            inflow:  amount > 0, venue = destination
+        holdings reflects only what is in the ledger — no inference from note.
     """
     if fiat is None:
         fiat = _FIAT_DEFAULT
@@ -95,16 +93,10 @@ def compute_venue_holdings(
         if row.type not in _HOLDING_TYPES:
             continue
 
-        if row.type == "TRANSFER" and row.amount < Decimal("0"):
-            # Outflow from source venue
-            _add(venue, asset, row.amount)
-            # Synthesise inflow to destination when note looks like a venue name
-            note = (row.note or "").strip()
-            if note and " " not in note:
-                dest = note.lower()
-                _add(dest, asset, abs(row.amount))
-        else:
-            _add(venue, asset, row.amount)
+        # TRANSFER rows (outflow and inflow) are explicit DB rows — use amount as-is.
+        # Note-based synthesis is intentionally removed: holdings reflects only
+        # actual ledger rows, never inferred from note content.
+        _add(venue, asset, row.amount)
 
     # Prune zero-quantity entries (closed / fully-transferred out)
     result: Dict[str, Dict[str, Decimal]] = {}
