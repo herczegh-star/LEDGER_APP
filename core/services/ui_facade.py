@@ -33,6 +33,10 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from core.constants import TRADE_TYPES
+from ledger_engine.fx_provider import CnbFxProvider as _CnbFxProvider
+
+# Module-level CNB provider — date-keyed cache; can be replaced in tests.
+_cnb = _CnbFxProvider()
 from core.ledger_store import LedgerStore
 from core.model import RawRow
 from core.reports.positions import compute_positions
@@ -570,6 +574,29 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
         if request.fee_currency:
             fee_currency = request.fee_currency.upper().strip() or None
 
+        # ── EUR → CZK normalization ───────────────────────────────────────────
+        # Ledger is CZK-only. If the user entered EUR, convert before writing.
+        note = request.note
+        fee_amount = request.fee_amount
+        if currency == "EUR":
+            try:
+                rate, rate_date = _cnb.get_eur_czk(request.timestamp.date())
+            except RuntimeError as exc:
+                return AddTradeResultDTO(
+                    success=False, n_rows_added=0, error_message=str(exc),
+                )
+            quote_amount = (quote_amount * rate).quantize(Decimal("0.01"))
+            if (fee_currency == "EUR" or fee_currency is None) and fee_amount is not None:
+                fee_amount = (fee_amount * rate).quantize(Decimal("0.01"))
+                fee_currency = "CZK"
+            currency = "CZK"
+            rate_note = f"Kurz {rate} {rate_date.isoformat()}"
+            if note:
+                if "Kurz " not in note:
+                    note = f"{note} | {rate_note}"
+            else:
+                note = rate_note
+
         inp = AddTradeInput(
             type=request.type,
             timestamp=request.timestamp,
@@ -578,9 +605,9 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             quote_currency=currency,
             quote_amount=quote_amount,
             venue=venue,
-            fee_amount=request.fee_amount,
+            fee_amount=fee_amount,
             fee_currency=fee_currency,
-            note=request.note,
+            note=note,
         )
 
         try:

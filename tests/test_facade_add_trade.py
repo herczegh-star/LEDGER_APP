@@ -221,7 +221,7 @@ def test_normalize_asset_uppercase(db):
 
 
 def test_normalize_currency_uppercase(db):
-    """currency 'eur' must be written as 'EUR'."""
+    """EUR input is normalized and converted to CZK — 'eur' never stored."""
     result = add_trade(
         _req(asset="BTC", amount=Decimal("1"), price=Decimal("50000"),
              currency="eur", venue="kraken"),
@@ -229,7 +229,9 @@ def test_normalize_currency_uppercase(db):
     )
     assert result.success, result.error_message
     currencies = {r.currency for r in _rows(db)}
-    assert "EUR" in currencies
+    # EUR is converted to CZK at write time — neither "EUR" nor "eur" appear in DB.
+    assert "CZK" in currencies
+    assert "EUR" not in currencies
     assert "eur" not in currencies
 
 

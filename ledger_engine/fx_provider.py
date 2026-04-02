@@ -2,8 +2,11 @@
 import configparser
 import logging
 import os
+import urllib.request
 from abc import ABC, abstractmethod
+from datetime import date, timedelta
 from decimal import Decimal
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 _DEFAULT_EUR_TO_CZK = Decimal("25")
@@ -68,3 +71,58 @@ class ConfigFxProvider(FxProvider):
 
     def get_eur_to_czk(self, date: str) -> Decimal:
         return self._rate
+
+
+class CnbFxProvider:
+    """Stahuje denní kurz EUR/CZK z ČNB s fallbackem na předchozí pracovní dny.
+
+    Cache: slovník {date: Decimal}, žije po dobu běhu procesu.
+    Pokud kurz pro požadovaný den není dostupný (víkend, svátek, ČNB ještě
+    nevyhlásilo), zkusí postupně až 6 předchozích dní.
+    Raises RuntimeError pokud žádný den nemá kurz.
+    """
+
+    _CNB_URL = (
+        "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
+        "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/"
+        "denni_kurz.txt?date={}"
+    )
+
+    def __init__(self) -> None:
+        self._cache: Dict[date, Decimal] = {}
+
+    def get_eur_czk(self, d: date) -> Tuple[Decimal, date]:
+        """Vrátí (kurz, datum kurzu) pro EUR/CZK.
+
+        Zkouší d, d-1, ..., d-6.
+        Raises RuntimeError pokud žádný den nemá kurz.
+        """
+        for delta in range(7):
+            lookup = d - timedelta(days=delta)
+            if lookup in self._cache:
+                return self._cache[lookup], lookup
+            rate = self._fetch(lookup)
+            if rate is not None:
+                self._cache[lookup] = rate
+                return rate, lookup
+        raise RuntimeError(
+            f"Kurz EUR/CZK nedostupný pro {d} ani předchozích 6 dní (ČNB API)."
+        )
+
+    def _fetch(self, d: date) -> Optional[Decimal]:
+        """Stáhne kurz z ČNB pro konkrétní datum. Vrátí None při jakékoli chybě."""
+        url = self._CNB_URL.format(d.strftime("%d.%m.%Y"))
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "LedgerApp/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                text = resp.read().decode("windows-1250")
+        except Exception:
+            return None
+        for line in text.splitlines():
+            parts = line.split("|")
+            if len(parts) >= 5 and parts[3].strip().upper() == "EUR":
+                try:
+                    return Decimal(parts[4].strip().replace(",", "."))
+                except Exception:
+                    return None
+        return None
