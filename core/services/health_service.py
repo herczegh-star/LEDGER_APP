@@ -43,6 +43,10 @@ _SEV_ORDER: Dict[str, int] = {ERROR: 0, WARNING: 1}
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 _INVESTMENT_TYPES = frozenset({"BUY", "SELL", "REVERSAL"})
 
+# Stablecoins that were historically misclassified as fiat in trade_service.
+# Used by check 8 (stablecoin_quote_legacy) — a WARNING-only diagnostic.
+_STABLECOIN_ASSETS: FrozenSet[str] = frozenset({"USDC", "USDT"})
+
 
 def _ts_str(row: RawRow) -> str:
     """Return ISO timestamp string or empty string if unavailable."""
@@ -273,6 +277,50 @@ def health_report(
                 ),
                 hint="Check that no SELL or negative-REVERSAL row exceeds the held position.",
             ))
+
+    # ── Check 8: Stablecoin used as quote currency (legacy rows) ─────────────
+    # BUY/SELL rows where row.currency is USDC/USDT indicate the stablecoin
+    # was used as fiat quote in a historical trade.  positions.py never treated
+    # these as fiat, so the WAC cost basis for such trades is likely zero.
+    # WARNING only — no auto-fix.  Repair: REVERSAL + re-entry as SWAP.
+    sc_trade_ids: Set[str] = set()
+    for row in rows:
+        if (
+            row.type in ("BUY", "SELL")
+            and (row.currency or "").upper() in _STABLECOIN_ASSETS
+            and (row.asset or "").upper() not in _STABLECOIN_ASSETS
+        ):
+            sc_trade_ids.add(row.id or "")
+
+    for sc_id in sorted(sc_trade_ids):
+        sc_rows = [r for r in rows if r.id == sc_id]
+        first = sc_rows[0] if sc_rows else rows[0]
+        non_sc_assets = {
+            r.asset.upper() for r in sc_rows
+            if r.asset and r.asset.upper() not in _STABLECOIN_ASSETS
+            and r.asset.upper() not in fiat_set
+        }
+        asset_str = ", ".join(sorted(non_sc_assets)) if non_sc_assets else "?"
+        sc_used = {
+            (r.currency or "").upper() for r in sc_rows
+            if (r.currency or "").upper() in _STABLECOIN_ASSETS
+        }
+        sc_name = "/".join(sorted(sc_used)) if sc_used else "USDC/USDT"
+        issues.append(_issue(
+            severity=WARNING,
+            kind="stablecoin_quote_legacy",
+            trade_id=sc_id,
+            asset=asset_str,
+            timestamp=_ts_str(first),
+            message=(
+                f"Trade {sc_id!r} used {sc_name} as quote currency "
+                f"(asset {asset_str!r}). WAC cost basis may be zero."
+            ),
+            hint=(
+                f"Stablecoins ({sc_name}) are assets, not fiat. "
+                "Repair: REVERSAL of this trade + re-entry as SWAP."
+            ),
+        ))
 
     # ── Sort: severity, kind, trade_id, asset, timestamp ─────────────────────
     issues.sort(key=lambda i: (
