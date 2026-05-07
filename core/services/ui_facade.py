@@ -39,7 +39,7 @@ from ledger_engine.fx_provider import CnbFxProvider as _CnbFxProvider
 _cnb = _CnbFxProvider()
 from core.ledger_store import LedgerStore
 from core.model import RawRow
-from core.reports.positions import compute_positions
+from core.reports.positions import compute_positions, compute_transfer_costs
 from core.service import LedgerService
 from core.services.portfolio_snapshot_service import get_portfolio_snapshot
 from core.services.trade_service import AddTradeInput
@@ -265,11 +265,14 @@ def get_dashboard_snapshot(
     }
 
     # ── Per-venue breakdown ───────────────────────────────────────────────────
+    # TRANSFER carries cost basis between venues for venue-local WAC.
+    transfer_costs = compute_transfer_costs(rows, _FIAT_DEFAULT)
     venues = sorted({r.venue for r in rows} | set(all_holdings.keys()))
     by_venue: Dict[str, VenueDashboardDTO] = {}
     for venue in venues:
         venue_rows = [r for r in rows if r.venue == venue]
-        venue_raw = compute_positions(venue_rows, _FIAT_DEFAULT)
+        venue_raw = compute_positions(venue_rows, _FIAT_DEFAULT,
+                                      initial_cost_transfer=transfer_costs)
         venue_snap = get_portfolio_snapshot(venue_rows, precomputed_positions=venue_raw)
 
         venue_positions: List[PositionDTO] = []

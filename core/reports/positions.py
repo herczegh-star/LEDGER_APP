@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Dict, FrozenSet, List
+from typing import Dict, FrozenSet, List, Optional
 
 from core.dto.reporting import ReportMeta, TableReport, TableRow
 from core.model import RawRow
@@ -55,6 +55,7 @@ class _State:
 def compute_positions(
     rows: List[RawRow],
     fiat: FrozenSet[str] = _FIAT_DEFAULT,
+    initial_cost_transfer: Optional[Dict[str, Decimal]] = None,
 ) -> List[PositionRow]:
     """Compute WAC per-asset positions from ledger rows.
 
@@ -106,18 +107,40 @@ def compute_positions(
     # in an asset→asset swap, to be applied to the incoming asset.
     # Realized P&L is deferred — it will be computed when the incoming asset is
     # eventually sold for fiat.
-    cost_transfer: Dict[str, Decimal] = {}
+    # When initial_cost_transfer is supplied (venue-local mode), TRANSFER rows
+    # are processed so cost basis flows between venues.
+    cost_transfer: Dict[str, Decimal] = dict(initial_cost_transfer or {})
+    venue_local = initial_cost_transfer is not None
 
     for row in sorted_rows:
         asset = row.asset.upper()
         if asset in fiat:
             continue                          # skip fiat quote legs
         if row.type not in _INVESTMENT_TYPES:
-            continue                          # skip FEE, TRANSFER
+            if not (venue_local and row.type == "TRANSFER"):
+                continue                      # skip FEE; skip TRANSFER in global mode
 
         if asset not in states:
             states[asset] = _State()
         state = states[asset]
+
+        # TRANSFER carries cost basis between venues for venue-local WAC.
+        if row.type == "TRANSFER":
+            if row.amount > 0:               # inflow: inherit cost from source venue
+                cost = cost_transfer.get(row.id, Decimal("0"))
+                state.quantity   += row.amount
+                state.cost_basis += cost
+            else:                            # outflow: remove WAC × qty
+                sold_qty = abs(row.amount)
+                wac = (
+                    state.cost_basis / state.quantity
+                    if state.quantity > Decimal("0") else Decimal("0")
+                )
+                cost_removed = wac * sold_qty
+                state.quantity   -= sold_qty
+                state.cost_basis -= cost_removed
+                cost_transfer[row.id] = cost_removed
+            continue
 
         fiat_amount = fiat_by_id.get(row.id)  # None when no fiat leg exists
 
@@ -223,3 +246,83 @@ def positions_report(
 
     meta = ReportMeta(bucket="snapshot", fiat=fiat, kind="snapshot")
     return TableReport(meta=meta, rows=table_rows, totals=None)
+
+
+def compute_transfer_costs(
+    rows: List[RawRow],
+    fiat: FrozenSet[str] = _FIAT_DEFAULT,
+) -> Dict[str, Decimal]:
+    """Return {trade_id: cost_basis_removed} for every TRANSFER outflow.
+
+    TRANSFER carries cost basis between venues for venue-local WAC.
+    Run once over all_rows before venue-local compute_positions() calls.
+    """
+    fiat = frozenset(a.upper() for a in fiat)
+    sorted_rows = sorted(rows, key=lambda r: (r.timestamp, r.id or "", 0 if r.amount < 0 else 1))
+
+    fiat_by_id: Dict[str, Decimal] = {}
+    fee_by_id: Dict[str, Decimal] = {}
+    for row in sorted_rows:
+        asset = row.asset.upper()
+        if asset not in fiat:
+            continue
+        if row.type in _INVESTMENT_TYPES:
+            fiat_by_id[row.id] = row.amount
+        elif row.type == "FEE":
+            fee_by_id[row.id] = fee_by_id.get(row.id, Decimal("0")) + abs(row.amount)
+
+    states: Dict[str, _State] = {}
+    cost_transfer: Dict[str, Decimal] = {}
+
+    for row in sorted_rows:
+        asset = row.asset.upper()
+        if asset in fiat:
+            continue
+        if row.type not in _INVESTMENT_TYPES and row.type != "TRANSFER":
+            continue  # skip FEE
+
+        if asset not in states:
+            states[asset] = _State()
+        state = states[asset]
+
+        # TRANSFER carries cost basis between venues for venue-local WAC.
+        if row.type == "TRANSFER":
+            if row.amount < 0:              # outflow: record WAC × qty leaving
+                sold_qty = abs(row.amount)
+                wac = (
+                    state.cost_basis / state.quantity
+                    if state.quantity > Decimal("0") else Decimal("0")
+                )
+                cost_removed = wac * sold_qty
+                state.quantity   -= sold_qty
+                state.cost_basis -= cost_removed
+                cost_transfer[row.id] = cost_removed
+            else:                           # inflow: inherit cost basis
+                cost = cost_transfer.get(row.id, Decimal("0"))
+                state.quantity   += row.amount
+                state.cost_basis += cost
+            continue
+
+        fiat_amount = fiat_by_id.get(row.id)
+        if row.amount > 0:
+            if fiat_amount is not None:
+                cost = abs(fiat_amount) + fee_by_id.get(row.id, Decimal("0"))
+            elif row.id in cost_transfer:
+                cost = cost_transfer[row.id]
+            else:
+                cost = Decimal("0")
+            state.quantity   += row.amount
+            state.cost_basis += cost
+        else:
+            sold_qty = abs(row.amount)
+            wac = (
+                state.cost_basis / state.quantity
+                if state.quantity > Decimal("0") else Decimal("0")
+            )
+            cost_removed = wac * sold_qty
+            state.quantity   -= sold_qty
+            state.cost_basis -= cost_removed
+            if fiat_amount is None:
+                cost_transfer[row.id] = cost_removed
+
+    return cost_transfer
