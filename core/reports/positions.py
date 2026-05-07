@@ -271,23 +271,29 @@ def compute_transfer_costs(
         elif row.type == "FEE":
             fee_by_id[row.id] = fee_by_id.get(row.id, Decimal("0")) + abs(row.amount)
 
-    states: Dict[str, _State] = {}
+    # Per-venue states: key = (venue, asset) so each venue's WAC evolves independently.
+    # Using (venue, asset) instead of asset prevents blending the source-venue WAC
+    # with the destination-venue balance after each TRANSFER inflow, which would
+    # inflate cost_removed for subsequent outflows.
+    states: Dict[tuple, _State] = {}
     cost_transfer: Dict[str, Decimal] = {}
 
     for row in sorted_rows:
         asset = row.asset.upper()
+        venue = row.venue.lower()
         if asset in fiat:
             continue
         if row.type not in _INVESTMENT_TYPES and row.type != "TRANSFER":
             continue  # skip FEE
 
-        if asset not in states:
-            states[asset] = _State()
-        state = states[asset]
+        key = (venue, asset)
+        if key not in states:
+            states[key] = _State()
+        state = states[key]
 
         # TRANSFER carries cost basis between venues for venue-local WAC.
         if row.type == "TRANSFER":
-            if row.amount < 0:              # outflow: record WAC × qty leaving
+            if row.amount < 0:              # outflow: record source-venue WAC × qty
                 sold_qty = abs(row.amount)
                 wac = (
                     state.cost_basis / state.quantity
@@ -297,7 +303,7 @@ def compute_transfer_costs(
                 state.quantity   -= sold_qty
                 state.cost_basis -= cost_removed
                 cost_transfer[row.id] = cost_removed
-            else:                           # inflow: inherit cost basis
+            else:                           # inflow: add inherited cost to destination venue
                 cost = cost_transfer.get(row.id, Decimal("0"))
                 state.quantity   += row.amount
                 state.cost_basis += cost
