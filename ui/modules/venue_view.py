@@ -150,8 +150,9 @@ def build_venue_view(
                     tight=True,
                 )
             )
+        avg_buy_label = "Avg Buy*" if p.asset == "USDC" else "Avg Buy"
         stat_items += [
-            stat("Avg Buy",        "—" if wallet_only else _czk(p.wac)),
+            stat(avg_buy_label,    "—" if wallet_only else _czk(p.wac)),
             stat("Net Invested",   "—" if wallet_only else _czk(p.cost_basis)),
             stat("Spot Price",     _czk(p.spot_price)),
             stat("Value",          _czk(p.value)),
@@ -179,6 +180,13 @@ def build_venue_view(
                     ),
                     ft.Divider(height=1, color="#1f2a3a"),
                     ft.Row(stat_items, spacing=40),
+                    *(
+                        [ft.Text(
+                            "* Avg Buy zahrnuje přenesený cost basis ze swapů.",
+                            size=10, color=T_MUT, italic=True,
+                        )]
+                        if p.asset == "USDC" else []
+                    ),
                 ],
                 spacing=12,
             ),

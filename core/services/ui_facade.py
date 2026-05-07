@@ -256,43 +256,46 @@ def get_dashboard_snapshot(
     from core.reports.holdings import compute_venue_holdings
     all_holdings = compute_venue_holdings(rows, _FIAT_DEFAULT)
 
-    # ── Global WAC map — used as fallback for transfer-only (wallet) venues ───
-    # WAC is a global invariant: transferring an asset does not change its unit
-    # cost.  Venues that received assets only via TRANSFER have no BUY rows and
-    # therefore no WAC position; we inherit the global WAC for display purposes.
-    global_wac_map: Dict[str, Decimal] = {
-        pos.asset: pos.wac for pos in raw_positions if pos.wac > _ZERO
-    }
-
     # ── Per-venue breakdown ───────────────────────────────────────────────────
+    # Venue cards intentionally use global WAC with venue holdings.
+    # Venue is treated as physical location, not independent cost-basis accounting.
+    global_by_asset: Dict[str, Any] = {pos.asset: pos for pos in raw_positions}
     venues = sorted({r.venue for r in rows} | set(all_holdings.keys()))
     by_venue: Dict[str, VenueDashboardDTO] = {}
     for venue in venues:
         venue_rows = [r for r in rows if r.venue == venue]
-        venue_raw = compute_positions(venue_rows, _FIAT_DEFAULT)
-        venue_snap = get_portfolio_snapshot(venue_rows, precomputed_positions=venue_raw)
+        venue_snap = get_portfolio_snapshot(venue_rows)
+
+        venue_holdings = all_holdings.get(venue, {})
 
         venue_positions: List[PositionDTO] = []
-        for pos in venue_raw:
-            if pos.quantity == _ZERO:
+        for h_asset in sorted(venue_holdings):
+            h_qty = venue_holdings[h_asset]
+            if h_qty <= _ZERO:
                 continue
-            roi_real = (
-                (pos.realized_pnl / pos.cost_basis * Decimal("100")).quantize(_ROI_PLACES)
-                if pos.cost_basis != _ZERO else None
-            )
-            vp = PositionDTO(
-                asset=pos.asset,
-                quantity=pos.quantity,
-                wac=pos.wac,
-                cost_basis=pos.cost_basis,
-                realized_pnl=pos.realized_pnl,
-                roi_realized=roi_real,
-            )
+            g_pos = global_by_asset.get(h_asset)
+            if g_pos is None or g_pos.wac == _ZERO:
+                vp = PositionDTO(
+                    asset=h_asset,
+                    quantity=h_qty,
+                    wac=_ZERO,
+                    cost_basis=_ZERO,
+                    realized_pnl=_ZERO,
+                )
+            else:
+                cost_basis = g_pos.wac * h_qty
+                vp = PositionDTO(
+                    asset=h_asset,
+                    quantity=h_qty,
+                    wac=g_pos.wac,
+                    cost_basis=cost_basis,
+                    realized_pnl=_ZERO,
+                )
             if prices_map:
-                spot = prices_map.get(pos.asset)
+                spot = prices_map.get(h_asset)
                 vp.spot_price = spot
                 if spot is not None:
-                    vp.value = vp.quantity * spot
+                    vp.value = h_qty * spot
                     if vp.cost_basis > _ZERO:
                         vp.unrealized_pnl = vp.value - vp.cost_basis
                         vp.roi_total = vp.unrealized_pnl / vp.cost_basis
@@ -302,47 +305,6 @@ def get_dashboard_snapshot(
         venue_vals = [p.value for p in venue_positions if p.value is not None]
         venue_value = sum(venue_vals, _ZERO) if venue_vals else None
 
-        venue_holdings = all_holdings.get(venue, {})
-
-        # ── WAC fallback for transfer-only assets (pure-wallet and mixed venues) ─
-        # A venue that received assets only via TRANSFER has no BUY rows, so
-        # compute_positions() returns nothing for those assets.  We synthesise
-        # PositionDTOs using the global WAC (which is unchanged by transfers) so
-        # that Avg Buy / Net Invested are shown correctly on the destination venue.
-        # This covers both:
-        #   - pure wallet venues  (venue_positions is empty)
-        #   - mixed venues        (venue_positions has WAC assets but a
-        #                          transfer-only asset is absent from it)
-        position_assets = {p.asset for p in venue_positions}
-        for h_asset, h_qty in venue_holdings.items():
-            if h_qty <= _ZERO:
-                continue
-            if h_asset in position_assets:
-                continue                     # already covered by WAC engine
-            g_wac = global_wac_map.get(h_asset, _ZERO)
-            inherited_cost = g_wac * h_qty
-            vp = PositionDTO(
-                asset=h_asset,
-                quantity=h_qty,
-                wac=g_wac,
-                cost_basis=inherited_cost,
-                realized_pnl=_ZERO,
-            )
-            if prices_map:
-                spot = prices_map.get(h_asset)
-                vp.spot_price = spot
-                if spot is not None:
-                    vp.value = h_qty * spot
-                    if inherited_cost > _ZERO:
-                        vp.unrealized_pnl = vp.value - inherited_cost
-                        vp.roi_total = vp.unrealized_pnl / inherited_cost
-            venue_positions.append(vp)
-        # Recompute totals whenever fallback positions were added
-        cost_basis_total = sum((p.cost_basis for p in venue_positions), _ZERO)
-        venue_vals = [p.value for p in venue_positions if p.value is not None]
-        venue_value = sum(venue_vals, _ZERO) if venue_vals else None
-
-        # Only show unrealized PnL when there is a real cost basis.
         venue_unr = (
             (venue_value - cost_basis_total)
             if venue_value is not None and cost_basis_total > _ZERO
