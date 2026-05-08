@@ -26,7 +26,6 @@ T_PRI     = "#e2e8f0"
 T_MUT     = "#7b8799"
 GREEN     = "#16a34a"
 RED       = "#ef4444"
-BLUE      = "#1d4ed8"
 
 _ZERO = Decimal("0")
 
@@ -104,9 +103,10 @@ def build_venue_view(
     detail_col    = ft.Column([detail_header, detail_scroll], spacing=0, expand=True)
 
     # ── Asset card builder ─────────────────────────────────────────────────
+    _STABLECOINS = frozenset({"USDC", "USDT"})
+
     def make_card(
         p,
-        physical_qty: Optional[Decimal] = None,
         wallet_only: bool = False,
     ) -> ft.Container:
         """Render one asset position card.
@@ -137,21 +137,12 @@ def build_venue_view(
                 tight=True,
             )
 
-        stat_items = [stat("Amount", _amt(p.quantity, p.asset))]
-        # Show physical qty only when it differs from WAC qty (transfer-adjusted)
-        if physical_qty is not None and physical_qty != p.quantity:
-            stat_items.append(
-                ft.Column(
-                    [
-                        ft.Text(f"Na {selected_venue[0].upper()}", size=11, color=BLUE),
-                        ft.Text(_amt(physical_qty, p.asset), size=13, color=T_PRI),
-                    ],
-                    spacing=2,
-                    tight=True,
-                )
-            )
-        stat_items += [
-            stat("Avg Buy",        "—" if wallet_only else _czk(p.wac)),
+        is_stable = p.asset.upper() in _STABLECOINS
+        avg_buy_label = "Avg Buy*" if (is_stable and not wallet_only) else "Avg Buy"
+
+        stat_items = [
+            stat("Amount",         _amt(p.quantity, p.asset)),
+            stat(avg_buy_label,    "—" if wallet_only else _czk(p.wac)),
             stat("Net Invested",   "—" if wallet_only else _czk(p.cost_basis)),
             stat("Spot Price",     _czk(p.spot_price)),
             stat("Value",          _czk(p.value)),
@@ -179,6 +170,16 @@ def build_venue_view(
                     ),
                     ft.Divider(height=1, color="#1f2a3a"),
                     ft.Row(stat_items, spacing=40),
+                    *(
+                        [ft.Text(
+                            "* U stablecoinů může Avg Buy zahrnovat přenesený cost basis ze swapů, "
+                            "proto nemusí odpovídat nominální ceně 1 USD.",
+                            size=10,
+                            color=T_MUT,
+                            italic=True,
+                        )]
+                        if is_stable and not wallet_only else []
+                    ),
                 ],
                 spacing=12,
             ),
@@ -197,11 +198,10 @@ def build_venue_view(
         vdto = snap_holder[0].by_venue.get(venue_name)
 
         if vdto and vdto.positions:
-            # Normal venue: use venue-specific WAC positions; physical qty as secondary stat
-            physical_qtys = {a: q for a, q in vdto.holdings.items() if q > _ZERO}
+            # Normal venue: render WAC positions as asset cards
             position_assets = {p.asset for p in vdto.positions}
             cards = [
-                make_card(p, physical_qty=physical_qtys.get(p.asset))
+                make_card(p)
                 for p in sorted(vdto.positions, key=lambda p: p.asset)
             ]
             # Mixed venue: also render assets present only in holdings (e.g. via TRANSFER)
