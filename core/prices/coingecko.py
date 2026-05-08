@@ -38,6 +38,7 @@ COINGECKO_IDS: Dict[str, str] = {
     "RUNE": "thorchain",
     "SOL":  "solana",
     "TAO":  "bittensor",
+    "TICS": "qubetics",
     "UNI":  "uniswap",
     "WOO":  "woo-network",
     "XRP":  "ripple",
