@@ -138,7 +138,7 @@ def build_venue_card(
                             [
                                 *(
                                     [ft.Image(
-                                        src=f"venue_icons/{venue_name.lower()}.png",
+                                        src=f"venue_icons/{venue_name.lower().replace(' ', '_')}.png",
                                         width=22, height=22,
                                         fit=ft.BoxFit.CONTAIN,
                                     )]

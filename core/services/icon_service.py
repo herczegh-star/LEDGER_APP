@@ -63,7 +63,7 @@ def setup() -> None:
 
 
 def has_venue_icon(venue: str) -> bool:
-    return (VENUE_ICONS_DIR / f"{venue.lower()}.png").exists()
+    return (VENUE_ICONS_DIR / f"{venue.lower().replace(' ', '_')}.png").exists()
 
 
 def has_icon(asset: str) -> bool:
