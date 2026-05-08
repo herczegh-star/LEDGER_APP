@@ -187,7 +187,10 @@ def compute_positions(
             else:
                 # Asset→asset swap: transfer cost basis to the incoming asset.
                 # P&L is deferred until the incoming asset is sold for fiat.
-                cost_transfer[row.id] = cost_removed
+                # In venue-local mode: keep pre-seeded global cost from
+                # compute_transfer_costs (global WAC) instead of venue-local WAC.
+                if not (venue_local and row.id in cost_transfer):
+                    cost_transfer[row.id] = cost_removed
 
     # ── Step 4: build output ──────────────────────────────────────────────────
     result: List[PositionRow] = []
@@ -276,6 +279,12 @@ def compute_transfer_costs(
     # with the destination-venue balance after each TRANSFER inflow, which would
     # inflate cost_removed for subsequent outflows.
     states: Dict[tuple, _State] = {}
+    # Global states: key = asset — mirrors global compute_positions (no TRANSFER).
+    # Used to record swap costs at global WAC so that venue Avg Buy for
+    # single-venue swap-acquired assets never exceeds global Avg Buy.
+    global_states: Dict[str, _State] = {}
+    # Internal per-venue swap costs — used only to update per-venue state BUY sides.
+    _pv_swap: Dict[str, Decimal] = {}
     cost_transfer: Dict[str, Decimal] = {}
 
     for row in sorted_rows:
@@ -292,6 +301,7 @@ def compute_transfer_costs(
         state = states[key]
 
         # TRANSFER carries cost basis between venues for venue-local WAC.
+        # Global states skip TRANSFER (net-zero effect on global totals).
         if row.type == "TRANSFER":
             if row.amount < 0:              # outflow: record source-venue WAC × qty
                 sold_qty = abs(row.amount)
@@ -309,16 +319,29 @@ def compute_transfer_costs(
                 state.cost_basis += cost
             continue
 
+        # ── Non-TRANSFER investment rows: maintain global_states in parallel ──
+        if asset not in global_states:
+            global_states[asset] = _State()
+        g_state = global_states[asset]
+
         fiat_amount = fiat_by_id.get(row.id)
         if row.amount > 0:
+            # Per-venue cost: prefer per-venue swap record; fall back to TRANSFER cost.
             if fiat_amount is not None:
                 cost = abs(fiat_amount) + fee_by_id.get(row.id, Decimal("0"))
+                g_cost = cost
+            elif row.id in _pv_swap:
+                cost   = _pv_swap[row.id]
+                g_cost = cost_transfer.get(row.id, Decimal("0"))  # global swap cost
             elif row.id in cost_transfer:
-                cost = cost_transfer[row.id]
+                cost   = cost_transfer[row.id]   # TRANSFER-inherited (per-venue)
+                g_cost = Decimal("0")            # TRANSFER is net-zero for global
             else:
-                cost = Decimal("0")
-            state.quantity   += row.amount
-            state.cost_basis += cost
+                cost = g_cost = Decimal("0")
+            state.quantity    += row.amount
+            state.cost_basis  += cost
+            g_state.quantity  += row.amount
+            g_state.cost_basis += g_cost
         else:
             sold_qty = abs(row.amount)
             wac = (
@@ -328,7 +351,17 @@ def compute_transfer_costs(
             cost_removed = wac * sold_qty
             state.quantity   -= sold_qty
             state.cost_basis -= cost_removed
+
+            g_wac = (
+                g_state.cost_basis / g_state.quantity
+                if g_state.quantity > Decimal("0") else Decimal("0")
+            )
+            g_cost_removed = g_wac * sold_qty
+            g_state.quantity  -= sold_qty
+            g_state.cost_basis -= g_cost_removed
+
             if fiat_amount is None:
-                cost_transfer[row.id] = cost_removed
+                _pv_swap[row.id]      = cost_removed    # per-venue cost for BUY-side tracking
+                cost_transfer[row.id] = g_cost_removed  # global WAC for venue-local seeding
 
     return cost_transfer
