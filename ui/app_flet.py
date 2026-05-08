@@ -30,6 +30,7 @@ from core.services import icon_service
 # ── Icons — served from user data dir (~/.ledger_app/icons/) ─────────────────
 icon_service.setup()   # migrate bundled icons + create dir
 _ICONS_DIR = icon_service.ICONS_DIR
+_STABLECOINS = frozenset({"USDC", "USDT"})
 
 BG = "#0b0f14"
 BG_CARD = "#0f1621"      # darker card
@@ -297,14 +298,15 @@ def _main_view_impl(page: ft.Page) -> None:
                     blur_style=ft.BlurStyle.OUTER,
                 )
 
+            is_stable = p.asset.upper() in _STABLECOINS
+            avg_buy_label = "Avg Buy*" if is_stable else "Avg Buy"
+
             stat_items = [
-                stat("Amount", _amt(p.quantity, p.asset)),
-            ]
-            stat_items += [
-                stat("Avg Buy", _czk(p.wac)),
-                stat("Net Invested", _czk(p.cost_basis)),
-                stat("Spot Price", _czk(p.spot_price)),
-                stat("Value", _czk(p.value)),
+                stat("Amount",         _amt(p.quantity, p.asset)),
+                stat(avg_buy_label,    _czk(p.wac)),
+                stat("Net Invested",   _czk(p.cost_basis)),
+                stat("Spot Price",     _czk(p.spot_price)),
+                stat("Value",          _czk(p.value)),
                 stat("ROI (Realized)", _pct_pts(roi_real)),
             ]
 
@@ -354,6 +356,16 @@ def _main_view_impl(page: ft.Page) -> None:
                         ),
                         ft.Divider(height=1, color="#1f2a3a"),
                         ft.Row(stat_items, spacing=40),
+                        *(
+                            [ft.Text(
+                                "* U stablecoinů může Avg Buy zahrnovat přenesený cost basis ze swapů, "
+                                "proto nemusí odpovídat nominální ceně 1 USD.",
+                                size=10,
+                                color=T_MUT,
+                                italic=True,
+                            )]
+                            if is_stable else []
+                        ),
                     ],
                     spacing=12,
                 ),
