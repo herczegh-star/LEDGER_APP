@@ -145,6 +145,29 @@ def test_venue_breakdown_included():
         assert os.path.isfile(out)
 
 
+def test_weight_column_with_prices():
+    """Weight % column renders without crash when total_value is present."""
+    snap = _snap([
+        _pos("BTC", "1",  "50000", "50000", spot="60000", value="60000", pnl="10000"),
+        _pos("ETH", "5",  "1000",  "5000",  spot="1200",  value="6000",  pnl="1000"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "weight.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+        with open(out, "rb") as f:
+            assert f.read(4) == b"%PDF"
+
+
+def test_weight_column_without_prices():
+    """Weight % column shows '-' without crash when total_value is None."""
+    snap = _snap([_pos("BTC", "1", "50000", "50000")])   # no spot → no total_value
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "weight_no_price.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+
+
 def test_venue_asset_breakdown_multiple_venues():
     """Venue x Asset section renders without crash for two venues with different assets."""
     def _vdto(venue, asset, qty, wac, cost, spot, value, pnl):

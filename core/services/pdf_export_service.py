@@ -29,7 +29,7 @@ _PAGE_W = 190
 _ROW_H  = 6   # mm — data row height
 _HDR_H  = 7   # mm — table header row height
 
-# ── Position table column definitions (label, width_mm, alignment) ────────────
+# ── Global positions table — 8 columns, no Weight % (venue×asset reuses this) ─
 # Widths must sum to _PAGE_W = 190.
 _POS_COLS = [
     ("Asset",         18, "L"),
@@ -42,6 +42,21 @@ _POS_COLS = [
     ("ROI",           22, "R"),
 ]
 
+# ── Global positions table WITH Weight % — 9 columns (dashboard page only) ───
+# _POS_COLS is kept unchanged so the Venue×Asset section can reuse it as-is.
+# 2 mm shaved from each of the 7 non-Asset columns → frees 14 mm for "Wt %".
+_POS_W_COLS = [
+    ("Asset",         18, "L"),
+    ("Qty",           28, "R"),
+    ("Avg Buy",       20, "R"),
+    ("Spot",          20, "R"),
+    ("Value",         23, "R"),
+    ("Wt %",          14, "R"),
+    ("Cost Basis",    23, "R"),
+    ("PnL",           24, "R"),
+    ("ROI",           20, "R"),
+]
+
 # ── Venue breakdown column definitions ────────────────────────────────────────
 _VEN_COLS = [
     ("Venue",         50, "L"),
@@ -52,8 +67,9 @@ _VEN_COLS = [
     ("ROI",           22, "R"),
 ]
 
-assert sum(c[1] for c in _POS_COLS) == _PAGE_W, "Position columns must sum to page width"
-assert sum(c[1] for c in _VEN_COLS) == _PAGE_W, "Venue columns must sum to page width"
+assert sum(c[1] for c in _POS_COLS)   == _PAGE_W, "Position columns must sum to page width"
+assert sum(c[1] for c in _POS_W_COLS) == _PAGE_W, "Position+weight columns must sum to page width"
+assert sum(c[1] for c in _VEN_COLS)   == _PAGE_W, "Venue columns must sum to page width"
 
 # Venue x Asset total row: first 4 _POS_COLS merged into one label cell, last 4 kept.
 _VA_LABEL_W = sum(c[1] for c in _POS_COLS[:4])  # 18+30+22+22 = 92
@@ -90,6 +106,16 @@ def _pct_pts(v: Optional[Decimal]) -> str:
 
 def _qty(v: Decimal) -> str:
     return f"{v:.8f}".rstrip("0").rstrip(".")
+
+
+def _weight_pct(value: Optional[Decimal], total_value: Optional[Decimal]) -> str:
+    """Format position value as % of portfolio total (e.g. '15.64%').
+
+    Returns '-' when either value is missing or total_value is zero.
+    """
+    if value is None or total_value is None or total_value == _ZERO:
+        return "-"
+    return f"{float(value / total_value * 100):.2f}%"
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -250,7 +276,7 @@ def export_dashboard_pdf(
     positions_sorted = sorted(snap.positions, key=lambda p: p.asset)
     _section(pdf, f"Positions ({len(positions_sorted)})")
 
-    _table_row(pdf, _POS_COLS, [c[0] for c in _POS_COLS], bold=True, fill=True)
+    _table_row(pdf, _POS_W_COLS, [c[0] for c in _POS_W_COLS], bold=True, fill=True)
 
     has_stable = False
     for pos in positions_sorted:
@@ -258,12 +284,13 @@ def export_dashboard_pdf(
         if is_stable:
             has_stable = True
         avg_buy = _fmt(pos.wac) + ("*" if is_stable else "")
-        _table_row(pdf, _POS_COLS, [
+        _table_row(pdf, _POS_W_COLS, [
             pos.asset,
             _qty(pos.quantity),
             avg_buy,
             _fmt(pos.spot_price),
             _fmt(pos.value),
+            _weight_pct(pos.value, snap.total_value),
             _fmt(pos.cost_basis),
             _fmt(pos.unrealized_pnl, sign=True),
             _pct(pos.roi_total),
