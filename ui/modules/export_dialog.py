@@ -15,6 +15,7 @@ import flet as ft
 
 from core.services.ui_facade import (
     export_cashflow_to_csv,
+    export_dashboard_pdf_to_path,
     export_ledger_to_csv,
     export_netto_invested_to_csv,
     export_positions_to_csv,
@@ -32,10 +33,11 @@ BLUE    = "#1d4ed8"
 
 # Export type options
 _EXPORT_TYPES = [
-    ft.dropdown.Option("ledger",        "Ledger (all rows)"),
-    ft.dropdown.Option("cashflow",      "Cashflow"),
-    ft.dropdown.Option("netto",         "Netto Invested"),
-    ft.dropdown.Option("positions",     "Positions (WAC)"),
+    ft.dropdown.Option("ledger",         "Ledger (all rows)"),
+    ft.dropdown.Option("cashflow",       "Cashflow"),
+    ft.dropdown.Option("netto",          "Netto Invested"),
+    ft.dropdown.Option("positions",      "Positions (WAC)"),
+    ft.dropdown.Option("dashboard_pdf",  "Dashboard PDF"),
 ]
 
 _BUCKETS = [
@@ -58,13 +60,27 @@ def _auto_filename(export_type: str, bucket: str | None) -> str:
         name = f"netto_invested_{bucket}_{ts}.csv"
     elif export_type == "positions":
         name = f"positions_{ts}.csv"
+    elif export_type == "dashboard_pdf":
+        name = f"dashboard_{ts}.pdf"
     else:
         name = f"export_{ts}.csv"
     return os.path.join(_EXPORTS_DIR, name)
 
 
-def open_export_dialog(page: ft.Page, db_path: str) -> None:
-    """Build and open the Export modal dialog."""
+def open_export_dialog(
+    page: ft.Page,
+    db_path: str,
+    snap_holder: list | None = None,
+) -> None:
+    """Build and open the Export modal dialog.
+
+    Args:
+        page:        Flet page reference.
+        db_path:     Path to the SQLite ledger database.
+        snap_holder: Optional list[DashboardSnapshotDTO | None] shared with
+                     the main app.  When provided, Dashboard PDF export reuses
+                     the already-loaded snapshot instead of loading a new one.
+    """
 
     # ── Form controls ───────────────────────────────────────────────────────
     dd_type = ft.Dropdown(
@@ -140,6 +156,16 @@ def open_export_dialog(page: ft.Page, db_path: str) -> None:
                 saved = export_netto_invested_to_csv(db_path, out_path, bucket=bucket, fiat=fiat)
             elif export_type == "positions":
                 saved = export_positions_to_csv(db_path, out_path)
+            elif export_type == "dashboard_pdf":
+                snap = snap_holder[0] if snap_holder else None
+                if snap is None:
+                    error_text.value = (
+                        "Dashboard data not loaded yet. "
+                        "Please wait for the dashboard to finish loading, then try again."
+                    )
+                    page.update()
+                    return
+                saved = export_dashboard_pdf_to_path(snap, out_path)
             else:
                 raise ValueError(f"Unknown export type: {export_type!r}")
         except Exception as exc:  # noqa: BLE001

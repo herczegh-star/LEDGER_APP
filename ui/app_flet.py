@@ -603,7 +603,7 @@ def _main_view_impl(page: ft.Page) -> None:
         open_reversal_dialog(page, db_path, _refresh_all)
 
     def on_export(e) -> None:
-        open_export_dialog(page, db_path)
+        open_export_dialog(page, db_path, snap_holder=snap_holder)
 
     _eye_btn = ft.IconButton(icon=ft.Icons.VISIBILITY, icon_color=T_MUT, icon_size=18, tooltip="Skryť/zobraziť hodnoty")
 

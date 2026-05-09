@@ -21,6 +21,7 @@ Public API:
     import_file(db_path, file_path, sheet_name) -> ImportResultDTO
     reverse_trade(db_path, trade_id) -> list
     run_sell_simulation(snap, venue, mode) -> SellSimResult
+    export_dashboard_pdf_to_path(snap, out_path) -> str
 """
 from __future__ import annotations
 
@@ -1222,3 +1223,23 @@ def run_sell_simulation(
             missing_prices=[],
         )
     return simulate_sell(vdto, mode)
+
+
+def export_dashboard_pdf_to_path(
+    snap: "DashboardSnapshotDTO",
+    out_path: str,
+) -> str:
+    """Generate a text-based dashboard PDF from an existing snapshot.
+
+    Thin wrapper over pdf_export_service.export_dashboard_pdf().
+    Does NOT reload data; caller must supply a current snapshot.
+
+    Args:
+        snap:     DashboardSnapshotDTO from a recent get_dashboard_snapshot() call.
+        out_path: Destination file path (should end with .pdf).
+
+    Returns:
+        Absolute path to the written file.
+    """
+    from core.services.pdf_export_service import export_dashboard_pdf
+    return export_dashboard_pdf(snap, out_path)
