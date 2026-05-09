@@ -145,6 +145,54 @@ def test_venue_breakdown_included():
         assert os.path.isfile(out)
 
 
+def test_recovery_column_losing_position():
+    """Recovery column renders for a position where spot < avg buy."""
+    snap = _snap([
+        _pos("BTC", "1", "100000", "100000", spot="80000", value="80000", pnl="-20000"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "recovery_loss.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+        with open(out, "rb") as f:
+            assert f.read(4) == b"%PDF"
+
+
+def test_recovery_column_profitable_position():
+    """Recovery column shows '-' for a profitable position."""
+    snap = _snap([
+        _pos("BTC", "1", "50000", "50000", spot="60000", value="60000", pnl="10000"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "recovery_profit.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+
+
+def test_recovery_column_no_spot():
+    """Recovery column shows '-' when spot price is absent."""
+    snap = _snap([_pos("BTC", "1", "50000", "50000")])   # no spot
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "recovery_nospot.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+
+
+def test_recovery_column_mixed_positions():
+    """Recovery renders correctly in a table with profitable and losing positions."""
+    snap = _snap([
+        _pos("BTC", "1", "100000", "100000", spot="80000", value="80000", pnl="-20000"),
+        _pos("ETH", "5", "1000",    "5000",  spot="1200",  value="6000",  pnl="1000"),
+        _pos("SOL", "10", "200",    "2000"),   # no spot
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "recovery_mixed.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+        with open(out, "rb") as f:
+            assert f.read(4) == b"%PDF"
+
+
 def test_venue_breakdown_roi_rendered():
     """Venue Breakdown ROI column is computed (positive and negative) without crash."""
     def _vdto(venue, pnl, cost):

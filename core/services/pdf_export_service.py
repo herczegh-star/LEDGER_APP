@@ -42,19 +42,21 @@ _POS_COLS = [
     ("ROI",           22, "R"),
 ]
 
-# ── Global positions table WITH Weight % — 9 columns (dashboard page only) ───
+# ── Global positions table — 10 columns (dashboard page only) ────────────────
 # _POS_COLS is kept unchanged so the Venue×Asset section can reuse it as-is.
-# 2 mm shaved from each of the 7 non-Asset columns → frees 14 mm for "Wt %".
+# 2 mm shaved from each of the 7 non-Asset columns + 1 mm from one more
+# → frees 15 mm for "Recovery".
 _POS_W_COLS = [
     ("Asset",         18, "L"),
-    ("Qty",           28, "R"),
-    ("Avg Buy",       20, "R"),
-    ("Spot",          20, "R"),
-    ("Value",         23, "R"),
-    ("Wt %",          14, "R"),
-    ("Cost Basis",    23, "R"),
-    ("PnL",           24, "R"),
-    ("ROI",           20, "R"),
+    ("Qty",           26, "R"),
+    ("Avg Buy",       18, "R"),
+    ("Spot",          18, "R"),
+    ("Value",         21, "R"),
+    ("Wt %",          13, "R"),
+    ("Cost Basis",    21, "R"),
+    ("PnL",           22, "R"),
+    ("ROI",           18, "R"),
+    ("Recovery",      15, "R"),
 ]
 
 # ── Venue breakdown column definitions ────────────────────────────────────────
@@ -116,6 +118,20 @@ def _weight_pct(value: Optional[Decimal], total_value: Optional[Decimal]) -> str
     if value is None or total_value is None or total_value == _ZERO:
         return "-"
     return f"{float(value / total_value * 100):.2f}%"
+
+
+def _recovery_pct(wac: Decimal, spot: Optional[Decimal]) -> str:
+    """Return the upside % needed to reach break-even when spot < wac.
+
+    Formula: (wac - spot) / spot
+    Returns '-' for profitable/break-even positions and when prices are absent.
+    Always prefixed with '+' when shown (recovery is always a positive move).
+    """
+    if spot is None or spot <= _ZERO or wac <= _ZERO:
+        return "-"
+    if spot >= wac:
+        return "-"
+    return f"+{float((wac - spot) / spot * 100):.2f}%"
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -294,6 +310,7 @@ def export_dashboard_pdf(
             _fmt(pos.cost_basis),
             _fmt(pos.unrealized_pnl, sign=True),
             _pct(pos.roi_total),
+            _recovery_pct(pos.wac, pos.spot_price),
         ])
 
     if not positions_sorted:
