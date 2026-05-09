@@ -331,7 +331,9 @@ def export_dashboard_pdf(
                 _fmt(invested_czk) if invested_czk else "-",
                 _fmt(vdto.value_total),
                 _fmt(vdto.unrealized_pnl, sign=True),
-                "-",   # venue-level total ROI% not computed in VenueDashboardDTO
+                _pct(vdto.unrealized_pnl / vdto.cost_basis_total)
+                if vdto.unrealized_pnl is not None and vdto.cost_basis_total > _ZERO
+                else "-",
             ])
 
     # ── Venue x Asset Breakdown ───────────────────────────────────────────────

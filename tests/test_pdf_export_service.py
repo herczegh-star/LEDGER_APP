@@ -145,6 +145,58 @@ def test_venue_breakdown_included():
         assert os.path.isfile(out)
 
 
+def test_venue_breakdown_roi_rendered():
+    """Venue Breakdown ROI column is computed (positive and negative) without crash."""
+    def _vdto(venue, pnl, cost):
+        pos = _pos("BTC", "1", str(cost), str(cost),
+                   spot=str(cost + int(pnl)), value=str(cost + int(pnl)), pnl=str(pnl))
+        return VenueDashboardDTO(
+            venue=venue,
+            positions=[pos],
+            holdings={"BTC": Decimal("1")},
+            cost_basis_total=Decimal(str(cost)),
+            assets_held=1,
+            invested={"CZK": Decimal(str(cost))},
+            net_flow={"CZK": -Decimal(str(cost))},
+            value_total=Decimal(str(cost + int(pnl))),
+            unrealized_pnl=Decimal(str(pnl)),
+        )
+
+    snap = _snap(
+        positions=[_pos("BTC", "1", "50000", "50000", spot="55000", value="55000", pnl="5000")],
+        by_venue={
+            "bybit":  _vdto("bybit",  "10000", 50000),   # +20% ROI
+            "kraken": _vdto("kraken", "-5000", 50000),   # -10% ROI
+        },
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "roi.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+        with open(out, "rb") as f:
+            assert f.read(4) == b"%PDF"
+
+
+def test_venue_breakdown_roi_zero_cost_basis():
+    """Venue Breakdown ROI shows '-' when cost_basis_total is zero."""
+    vdto = VenueDashboardDTO(
+        venue="wallet",
+        positions=[],
+        holdings={"BTC": Decimal("1")},
+        cost_basis_total=Decimal("0"),
+        assets_held=1,
+        invested={"CZK": Decimal("0")},
+        net_flow={"CZK": Decimal("0")},
+        value_total=None,
+        unrealized_pnl=None,
+    )
+    snap = _snap(positions=[], by_venue={"wallet": vdto})
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "zero_cost.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+
+
 def test_weight_column_with_prices():
     """Weight % column renders without crash when total_value is present."""
     snap = _snap([
