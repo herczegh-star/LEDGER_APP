@@ -480,6 +480,11 @@ def _main_view_impl(page: ft.Page) -> None:
     _venues_view, _run_venues = _build_vv(page, db_path, price_provider=_price_provider, fiat=_price_fiat)
     _tick("build_venue_view() done")
 
+    from ui.modules.analysis_view import build_analysis_view as _build_av
+    _tick("import ui.modules.analysis_view done")
+    _analysis_view, _run_analysis = _build_av(page, db_path, price_provider=_price_provider, fiat=_price_fiat)
+    _tick("build_analysis_view() done")
+
     from ui.modules.add_trade_dialog import open_add_trade_dialog
     from ui.modules.export_dialog import open_export_dialog
     from ui.modules.import_dialog import open_import_dialog
@@ -509,6 +514,9 @@ def _main_view_impl(page: ft.Page) -> None:
         elif idx == 4:
             _content.content = _venues_view
             _run_venues()
+        elif idx == 5:
+            _content.content = _analysis_view
+            _run_analysis()
         else:
             _content.content = _ledger_view
             _run_ledger()
@@ -522,6 +530,7 @@ def _main_view_impl(page: ft.Page) -> None:
         (ft.Icons.TABLE_CHART_OUTLINED,      ft.Icons.TABLE_CHART,           "Positions"),
         (ft.Icons.HEALTH_AND_SAFETY_OUTLINED,ft.Icons.HEALTH_AND_SAFETY,     "Health"),
         (ft.Icons.ACCOUNT_BALANCE_OUTLINED,  ft.Icons.ACCOUNT_BALANCE,       "Venues"),
+        (ft.Icons.ANALYTICS_OUTLINED,        ft.Icons.ANALYTICS,             "Analysis"),
         (ft.Icons.LIST_ALT_OUTLINED,         ft.Icons.LIST_ALT,              "Ledger"),
     ]
     _nav_idx = [0]
@@ -574,6 +583,8 @@ def _main_view_impl(page: ft.Page) -> None:
             _run_health()
         elif active is _venues_view:
             _run_venues()
+        elif active is _analysis_view:
+            _run_analysis()
         elif active is _ledger_view:
             _run_ledger()
 

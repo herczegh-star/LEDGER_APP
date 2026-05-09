@@ -20,6 +20,7 @@ Public API:
     export_positions_to_csv(db_path, out_path) -> str
     import_file(db_path, file_path, sheet_name) -> ImportResultDTO
     reverse_trade(db_path, trade_id) -> list
+    run_sell_simulation(snap, venue, mode) -> SellSimResult
 """
 from __future__ import annotations
 
@@ -1186,3 +1187,38 @@ def delete_trade(db_path: str, trade_id: str) -> int:
         return store.delete_by_id(trade_id)
     finally:
         store.close()
+
+
+# ── Analysis ───────────────────────────────────────────────────────────────────
+
+def run_sell_simulation(
+    snap: "DashboardSnapshotDTO",
+    venue: str,
+    mode: str = "all",
+):
+    """Project a simulated sell outcome from an existing snapshot.
+
+    Pure read-only wrapper — delegates to analysis_service.simulate_sell().
+    Does NOT reload data or write to the ledger.
+
+    Args:
+        snap:  DashboardSnapshotDTO from a recent get_dashboard_snapshot() call.
+        venue: Venue name to simulate (must match a key in snap.by_venue).
+        mode:  "all" | "profitable_only" | "loss_only"
+
+    Returns:
+        SellSimResult with per-asset projection rows and aggregate totals.
+    """
+    from core.services.analysis_service import SellSimResult, simulate_sell
+    vdto = snap.by_venue.get(venue)
+    if vdto is None:
+        return SellSimResult(
+            venue=venue,
+            mode=mode,
+            rows=[],
+            total_value=None,
+            total_cost_basis=_ZERO,
+            total_simulated_pnl=None,
+            missing_prices=[],
+        )
+    return simulate_sell(vdto, mode)
