@@ -55,6 +55,9 @@ _VEN_COLS = [
 assert sum(c[1] for c in _POS_COLS) == _PAGE_W, "Position columns must sum to page width"
 assert sum(c[1] for c in _VEN_COLS) == _PAGE_W, "Venue columns must sum to page width"
 
+# Venue x Asset total row: first 4 _POS_COLS merged into one label cell, last 4 kept.
+_VA_LABEL_W = sum(c[1] for c in _POS_COLS[:4])  # 18+30+22+22 = 92
+
 
 # ── Formatting helpers (ASCII-safe, no CZK/EUR suffix in table cells) ─────────
 
@@ -126,6 +129,43 @@ def _kv(pdf, label: str, value: str, lw: int = 60) -> None:
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(_PAGE_W - lw, 6, value, new_x="LMARGIN", new_y="NEXT")
+
+
+def _va_venue_header(pdf, venue_name: str) -> None:
+    """Dark-filled banner row showing the venue name as a subsection header."""
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(45, 75, 115)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 7, f"  {venue_name}", border=0, fill=True,
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+
+
+def _va_total_row(
+    pdf,
+    value: Optional[Decimal],
+    cost_basis: Decimal,
+    pnl: Optional[Decimal],
+    roi_str: str,
+) -> None:
+    """Subtotal row for one venue in the Venue x Asset section.
+
+    The first four _POS_COLS (Asset/Qty/Avg Buy/Spot) are merged into a single
+    'Total' label cell; the remaining four data columns keep their widths.
+    """
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_fill_color(228, 236, 248)
+    _, w_val,  a_val  = _POS_COLS[4]
+    _, w_cost, a_cost = _POS_COLS[5]
+    _, w_pnl,  a_pnl  = _POS_COLS[6]
+    _, w_roi,  a_roi  = _POS_COLS[7]
+    pdf.cell(_VA_LABEL_W, _HDR_H, "Total", border=1, align="L", fill=True,
+             new_x="RIGHT", new_y="TOP")
+    pdf.cell(w_val,  _HDR_H, _fmt(value),          border=1, align=a_val,  fill=True, new_x="RIGHT", new_y="TOP")
+    pdf.cell(w_cost, _HDR_H, _fmt(cost_basis),     border=1, align=a_cost, fill=True, new_x="RIGHT", new_y="TOP")
+    pdf.cell(w_pnl,  _HDR_H, _fmt(pnl, sign=True), border=1, align=a_pnl,  fill=True, new_x="RIGHT", new_y="TOP")
+    pdf.cell(w_roi,  _HDR_H, roi_str,              border=1, align=a_roi,  fill=True,
+             new_x="LMARGIN", new_y="NEXT")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -266,6 +306,63 @@ def export_dashboard_pdf(
                 _fmt(vdto.unrealized_pnl, sign=True),
                 "-",   # venue-level total ROI% not computed in VenueDashboardDTO
             ])
+
+    # ── Venue x Asset Breakdown ───────────────────────────────────────────────
+    if active_venues:
+        pdf.ln(6)
+        _section(pdf, "Venue x Asset Breakdown")
+        va_has_stable = False
+
+        for venue, vdto in sorted(active_venues.items()):
+            v_positions = sorted(
+                [p for p in vdto.positions if p.quantity > _ZERO],
+                key=lambda p: p.asset,
+            )
+            if not v_positions:
+                continue
+
+            _va_venue_header(pdf, venue.upper())
+            _table_row(pdf, _POS_COLS, [c[0] for c in _POS_COLS], bold=True, fill=True)
+
+            for pos in v_positions:
+                is_stable = pos.asset.upper() in _STABLECOINS
+                if is_stable:
+                    va_has_stable = True
+                avg_buy = _fmt(pos.wac) + ("*" if is_stable else "")
+                _table_row(pdf, _POS_COLS, [
+                    pos.asset,
+                    _qty(pos.quantity),
+                    avg_buy,
+                    _fmt(pos.spot_price),
+                    _fmt(pos.value),
+                    _fmt(pos.cost_basis),
+                    _fmt(pos.unrealized_pnl, sign=True),
+                    _pct(pos.roi_total),
+                ])
+
+            # Per-venue subtotals (partial sums — skip assets without a price)
+            v_cost = sum((p.cost_basis for p in v_positions), _ZERO)
+            v_val_items  = [p.value          for p in v_positions if p.value          is not None]
+            v_pnl_items  = [p.unrealized_pnl for p in v_positions if p.unrealized_pnl is not None]
+            v_value = sum(v_val_items, _ZERO) if v_val_items else None
+            v_pnl   = sum(v_pnl_items, _ZERO) if v_pnl_items else None
+            v_roi_str = (
+                _pct(v_pnl / v_cost)
+                if v_pnl is not None and v_cost > _ZERO
+                else "-"
+            )
+            _va_total_row(pdf, v_value, v_cost, v_pnl, v_roi_str)
+            pdf.ln(3)
+
+        if va_has_stable:
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(130, 130, 130)
+            pdf.multi_cell(
+                0, 5,
+                "* For stablecoins, Avg Buy may include inherited cost basis from "
+                "asset swaps and may not reflect the nominal USD price.",
+            )
+            pdf.set_text_color(0, 0, 0)
 
     pdf.output(out_path)
     return os.path.abspath(out_path)

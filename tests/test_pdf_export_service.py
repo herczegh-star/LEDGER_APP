@@ -145,6 +145,60 @@ def test_venue_breakdown_included():
         assert os.path.isfile(out)
 
 
+def test_venue_asset_breakdown_multiple_venues():
+    """Venue x Asset section renders without crash for two venues with different assets."""
+    def _vdto(venue, asset, qty, wac, cost, spot, value, pnl):
+        pos = _pos(asset, qty, wac, cost, spot=spot, value=value, pnl=pnl)
+        return VenueDashboardDTO(
+            venue=venue,
+            positions=[pos],
+            holdings={asset: Decimal(qty)},
+            cost_basis_total=Decimal(cost),
+            assets_held=1,
+            invested={"CZK": Decimal(cost)},
+            net_flow={"CZK": -Decimal(cost)},
+            value_total=Decimal(value),
+            unrealized_pnl=Decimal(pnl),
+        )
+
+    vdto_bybit  = _vdto("bybit",  "BTC", "1",  "50000", "50000", "60000", "60000", "10000")
+    vdto_kraken = _vdto("kraken", "ETH", "5",  "1000",  "5000",  "1200",  "6000",  "1000")
+    snap = _snap(
+        positions=[
+            _pos("BTC", "1", "50000", "50000", spot="60000", value="60000", pnl="10000"),
+            _pos("ETH", "5", "1000",  "5000",  spot="1200",  value="6000",  pnl="1000"),
+        ],
+        by_venue={"bybit": vdto_bybit, "kraken": vdto_kraken},
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "multi_venue.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+        with open(out, "rb") as f:
+            assert f.read(4) == b"%PDF"
+
+
+def test_venue_asset_breakdown_no_spot_price():
+    """Venue x Asset section handles positions with no spot price gracefully."""
+    pos_no_price = _pos("BTC", "1", "50000", "50000")   # no spot
+    vdto = VenueDashboardDTO(
+        venue="bybit",
+        positions=[pos_no_price],
+        holdings={"BTC": Decimal("1")},
+        cost_basis_total=Decimal("50000"),
+        assets_held=1,
+        invested={"CZK": Decimal("50000")},
+        net_flow={"CZK": Decimal("-50000")},
+        value_total=None,
+        unrealized_pnl=None,
+    )
+    snap = _snap(positions=[pos_no_price], by_venue={"bybit": vdto})
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "no_spot.pdf")
+        export_dashboard_pdf(snap, out)
+        assert os.path.isfile(out)
+
+
 def test_returns_absolute_path():
     snap = _snap([_pos("SOL", "10", "100", "1000")])
     with tempfile.TemporaryDirectory() as tmp:
