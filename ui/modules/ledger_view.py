@@ -42,6 +42,9 @@ _TYPE_COLORS = {
 
 _ZERO = Decimal("0")
 
+# Fiatové assety — currency leg double-entry páru; unit price pro ně nemá smysl
+_FIAT_ASSETS = frozenset({"EUR", "CZK", "USD", "GBP", "PLN", "USDT", "USDC", "BUSD"})
+
 
 # ── Pure filter/sort helper ──────────────────────────────────────────────────
 
@@ -115,6 +118,35 @@ def _fmt_amount(val: Decimal) -> str:
         _, dec = s.split(".")
         if len(dec) < 2:
             s = f"{val:,.2f}"
+    return s
+
+
+def _fmt_unit_price(row) -> str:
+    """Formátuje jednotkovou cenu z row.price pro asset leg BUY/SELL.
+
+    Vrátí "—" pro currency leg (asset je fiat), FEE, TRANSFER, REVERSAL
+    a řádky bez price.  Přidá suffix měny pokud currency ≠ CZK.
+    """
+    if row.type not in ("BUY", "SELL"):
+        return "—"
+    if (row.asset or "").upper() in _FIAT_ASSETS:
+        return "—"     # currency leg double-entry páru
+    if not row.price or row.price == _ZERO:
+        return "—"
+
+    v = float(row.price)
+    if v >= 100_000:
+        s = f"{v:,.0f}"
+    elif v >= 1_000:
+        s = f"{v:,.2f}"
+    elif v >= 1:
+        s = f"{v:,.4f}".rstrip("0").rstrip(".")
+    else:
+        s = f"{v:.6f}".rstrip("0").rstrip(".")
+
+    cur = (row.currency or "").upper()
+    if cur and cur != "CZK":
+        s = f"{s} {cur}"
     return s
 
 
@@ -193,7 +225,7 @@ def build_ledger_view(
     status_txt = ft.Text("", size=12, color=T_MUT)
 
     # ── Column widths (px) ────────────────────────────────────────────────────
-    _CW = [160, 75, 70, 110, 85, 130, 90, 0, 120]  # Ts,Type,Asset,Amt,Cur,ID,Venue,Note(expand),Actions
+    _CW = [160, 75, 70, 110, 110, 130, 90, 0, 120]  # Ts,Type,Asset,Amt,UnitPrice,ID,Venue,Note(expand),Actions
 
     def _hcell(label: str, w: int, right: bool = False, expand: bool = False) -> ft.Container:
         return ft.Container(
@@ -219,14 +251,14 @@ def build_ledger_view(
 
     header_row = ft.Container(
         content=ft.Row([
-            _hcell("Timestamp",  _CW[0]),
-            _hcell("Type",       _CW[1]),
-            _hcell("Asset",      _CW[2]),
-            _hcell("Amount",     _CW[3], right=True),
-            _hcell("Currency",   _CW[4]),
-            _hcell("Trade ID",   _CW[5]),
-            _hcell("Venue",      _CW[6]),
-            _hcell("Note",       _CW[7], expand=True),
+            _hcell("Timestamp",       _CW[0]),
+            _hcell("Type",            _CW[1]),
+            _hcell("Asset",           _CW[2]),
+            _hcell("Asset Amount",    _CW[3], right=True),
+            _hcell("Unit Price (CZK)", _CW[4], right=True),
+            _hcell("Trade ID",        _CW[5]),
+            _hcell("Venue",           _CW[6]),
+            _hcell("Note",            _CW[7], expand=True),
             ft.Container(width=_CW[8]),
         ], spacing=0),
         bgcolor=BG_HDR,
@@ -445,14 +477,14 @@ def build_ledger_view(
                 )
                 inner.append(ft.Container(
                     content=ft.Row([
-                        _dcell(ts_str,                   _CW[0], T_MUT,       mono=True),
-                        _dcell(row.type,                 _CW[1], type_color),
-                        _dcell(row.asset,                _CW[2], T_PRI),
-                        _dcell(_fmt_amount(row.amount),  _CW[3], amt_color,   right=True, mono=True),
-                        _dcell(row.currency or "—",      _CW[4], T_MUT),
-                        _dcell(_short_id(row.id),        _CW[5], T_MUT,       mono=True),
-                        _dcell(row.venue or "—",         _CW[6], T_MUT),
-                        _dcell(note_display or "—",      _CW[7], T_MUT,       expand=True),
+                        _dcell(ts_str,                    _CW[0], T_MUT,       mono=True),
+                        _dcell(row.type,                  _CW[1], type_color),
+                        _dcell(row.asset,                 _CW[2], T_PRI),
+                        _dcell(_fmt_amount(row.amount),   _CW[3], amt_color,   right=True, mono=True),
+                        _dcell(_fmt_unit_price(row),      _CW[4], T_MUT,       right=True, mono=True),
+                        _dcell(_short_id(row.id),         _CW[5], T_MUT,       mono=True),
+                        _dcell(row.venue or "—",          _CW[6], T_MUT),
+                        _dcell(note_display or "—",       _CW[7], T_MUT,       expand=True),
                         ft.Container(
                             content=ft.Row(btns, spacing=0, tight=True),
                             width=_CW[8],
