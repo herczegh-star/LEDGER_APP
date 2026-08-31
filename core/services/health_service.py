@@ -175,6 +175,16 @@ def health_report(
         return outflow_assets.isdisjoint(inflow_assets)
 
     for trade_id, trade_rows in sorted(groups.items()):
+        # ── Fully-reversed trade: every asset in this trade group nets exactly
+        #    to Decimal("0") (BUY + matching REVERSAL).  Such a trade has no
+        #    economic substance, so the structural quote-leg checks 1–4 below
+        #    do not apply.  Other checks (5–8) run over all rows regardless.
+        _net: Dict[str, Decimal] = defaultdict(Decimal)
+        for _r in trade_rows:
+            _net[_r.asset.upper()] += _r.amount
+        if trade_rows and all(v == Decimal("0") for v in _net.values()):
+            continue
+
         fiat_rows     = [r for r in trade_rows if r.asset.upper() in fiat_set]
         non_fiat_rows = [r for r in trade_rows if r.asset.upper() not in fiat_set]
 
