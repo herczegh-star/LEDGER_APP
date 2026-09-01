@@ -37,6 +37,7 @@ COINGECKO_IDS: Dict[str, str] = {
     "PENGU":"pudgy-penguins",
     "RUNE": "thorchain",
     "SOL":  "solana",
+    "SOLX": "solaxy",
     "TAO":  "bittensor",
     "TICS": "qubetics",
     "UNI":  "uniswap",
