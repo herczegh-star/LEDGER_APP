@@ -140,6 +140,13 @@ def health_report(
         if row.type in _INVESTMENT_TYPES:
             groups[row.id or ""].append(row)
 
+    # FEE rows indexed by trade id — used to recognise a fee-currency correction:
+    # a REVERSAL leg that exactly cancels a same-id FEE of the same asset.
+    _fees_by_trade: Dict[str, List[RawRow]] = defaultdict(list)
+    for row in rows:
+        if row.type == "FEE":
+            _fees_by_trade[row.id or ""].append(row)
+
     def _is_valid_swap(non_fiat_rows: list) -> bool:
         """Return True iff the rows form a valid 1:1 crypto↔crypto swap.
 
@@ -185,8 +192,25 @@ def health_report(
         if trade_rows and all(v == Decimal("0") for v in _net.values()):
             continue
 
-        fiat_rows     = [r for r in trade_rows if r.asset.upper() in fiat_set]
-        non_fiat_rows = [r for r in trade_rows if r.asset.upper() not in fiat_set]
+        # ── Fee-currency correction: a REVERSAL leg that exactly cancels a
+        #    same-id FEE of the same asset (equal magnitude, opposite sign) is a
+        #    correction of a mis-booked fee, not an investment leg.  Drop such
+        #    legs before the structural checks so they raise no missing_quote_leg.
+        #    A lone REVERSAL with no matching same-id FEE is left untouched.
+        _fee_avail = [
+            (f.asset.upper(), f.amount) for f in _fees_by_trade.get(trade_id, [])
+        ]
+        _corrective_idx = set()
+        for _i, _r in enumerate(trade_rows):
+            if _r.type == "REVERSAL" and (_r.asset.upper(), -_r.amount) in _fee_avail:
+                _fee_avail.remove((_r.asset.upper(), -_r.amount))
+                _corrective_idx.add(_i)
+        effective_rows = [
+            r for i, r in enumerate(trade_rows) if i not in _corrective_idx
+        ]
+
+        fiat_rows     = [r for r in effective_rows if r.asset.upper() in fiat_set]
+        non_fiat_rows = [r for r in effective_rows if r.asset.upper() not in fiat_set]
 
         # ── Check 1: Missing quote leg ────────────────────────────────────────
         if non_fiat_rows and not fiat_rows and not _is_valid_swap(non_fiat_rows):

@@ -100,6 +100,13 @@ def compute_positions(
                 fee_by_id.get(row.id, Decimal("0")) + abs(row.amount)
             )
 
+    # Trade ids that contain a TRANSFER leg.  A TRANSFER's cost basis flows only
+    # through the dedicated TRANSFER branch (and its cross-venue seed); a
+    # positive BUY / STAKING / REVERSAL leg that merely shares a TRANSFER's id
+    # (e.g. a fee-currency correction booked against the transfer id) must NOT
+    # inherit that id's cost_transfer entry as if it were an asset→asset swap-in.
+    transfer_ids: set = {r.id for r in sorted_rows if r.type == "TRANSFER"}
+
     # ── Step 3: process non-fiat investment rows in chronological order ───────
     states: Dict[str, _State] = {}
 
@@ -117,8 +124,25 @@ def compute_positions(
         if asset in fiat:
             continue                          # skip fiat quote legs
         if row.type not in _INVESTMENT_TYPES:
+            # Negative non-fiat FEE (on-chain withdrawal / swap network fee paid
+            # in the asset itself) permanently leaves the wallet: reduce the
+            # position quantity and remove its cost basis at the current WAC.
+            # No proceeds -> realized P&L is unchanged and no cost basis is
+            # created; this is not a SELL and not a REVERSAL.  Fiat (EUR/CZK) FEE
+            # keeps its existing treatment: folded into the linked trade via
+            # fee_by_id.
+            if row.type == "FEE" and row.amount < Decimal("0") and asset not in fiat:
+                if asset not in states:
+                    states[asset] = _State()
+                fee_state = states[asset]
+                fee_paid = -row.amount
+                if fee_state.quantity > Decimal("0"):
+                    fee_wac = fee_state.cost_basis / fee_state.quantity
+                    fee_state.cost_basis -= fee_wac * fee_paid
+                fee_state.quantity -= fee_paid
+                continue
             if not (venue_local and row.type == "TRANSFER"):
-                continue                      # skip FEE; skip TRANSFER in global mode
+                continue                      # skip TRANSFER in global mode
 
         if asset not in states:
             states[asset] = _State()
@@ -151,9 +175,11 @@ def compute_positions(
                 base_cost = abs(fiat_amount)
                 fee_cost  = fee_by_id.get(row.id, Decimal("0"))
                 cost      = base_cost + fee_cost
-            elif row.id in cost_transfer:
+            elif row.id in cost_transfer and row.id not in transfer_ids:
                 # Asset→asset swap: inherit cost basis from the outgoing leg.
                 # STAKING rewards have zero fiat cost → lowers blended WAC.
+                # Excludes ids that carry a TRANSFER leg — a positive leg sharing
+                # a transfer id is not a swap-in counterpart.
                 cost = cost_transfer[row.id]
             else:
                 # STAKING or no known cost (zero cost basis)
@@ -293,7 +319,25 @@ def compute_transfer_costs(
         if asset in fiat:
             continue
         if row.type not in _INVESTMENT_TYPES and row.type != "TRANSFER":
-            continue  # skip FEE
+            # Negative non-fiat FEE reduces the paying venue's position (and the
+            # global mirror) at the current WAC, so venue-local swap-cost seeds
+            # stay consistent with compute_positions().  Fiat FEE untouched.
+            if row.type == "FEE" and row.amount < Decimal("0") and asset not in fiat:
+                fee_paid = -row.amount
+                fkey = (venue, asset)
+                if fkey not in states:
+                    states[fkey] = _State()
+                pv = states[fkey]
+                if pv.quantity > Decimal("0"):
+                    pv.cost_basis -= (pv.cost_basis / pv.quantity) * fee_paid
+                pv.quantity -= fee_paid
+                if asset not in global_states:
+                    global_states[asset] = _State()
+                gv = global_states[asset]
+                if gv.quantity > Decimal("0"):
+                    gv.cost_basis -= (gv.cost_basis / gv.quantity) * fee_paid
+                gv.quantity -= fee_paid
+            continue  # skip FEE (non-fiat handled above)
 
         key = (venue, asset)
         if key not in states:
