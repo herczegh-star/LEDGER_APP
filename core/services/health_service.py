@@ -12,6 +12,17 @@ V1 checks:
   5. zero_amount             – any row with amount == 0                 (WARNING)
   6. missing_timestamp       – row without a valid timestamp            (ERROR)
   7. oversell                – SELL/REVERSAL exceeds held position      (ERROR)
+  9. invalid_correction_group / correction_of_unknown_trade /
+     correction_note_unparseable / correction_reversed_via_standard_reversal
+                              – malformed or misused CORRECTION groups   (ERROR/WARNING)
+ 10. invalid_buy_cost_correction_group / buy_cost_correction_of_unknown_trade /
+     buy_cost_correction_of_not_a_buy / buy_cost_correction_note_unparseable /
+     buy_cost_correction_reversed_via_standard_reversal
+                              – malformed or misused BUY_COST_CORRECTION  (ERROR/WARNING)
+                                groups
+ 11. invalid_portfolio_boundary_group
+                              – malformed PORTFOLIO_CONTRIBUTION/WITHDRAWAL (ERROR)
+                                groups
 
 Output ordering:
   severity (error first), kind, trade_id, asset, timestamp  — fully deterministic.
@@ -29,8 +40,14 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Dict, FrozenSet, List, Optional, Set
 
+from core.buy_cost_correction import (
+    parse_buy_cost_correction_note,
+    validate_buy_cost_correction_group,
+)
+from core.correction import parse_correction_note, validate_correction_group
 from core.dto.reporting import ReportMeta, TableReport, TableRow
 from core.model import RawRow
+from core.portfolio_boundary import validate_portfolio_boundary_group
 from core.reports.positions import compute_positions
 
 # Severity labels
@@ -119,7 +136,13 @@ def health_report(
             ))
 
     # ── Check 5: Zero amount ──────────────────────────────────────────────────
+    # CORRECTION's position marker leg is REQUIRED to be amount=0 — that is
+    # not an anomaly, so it is excluded here. Its own validity (exactly one
+    # zero-amount marker, matched with exactly one nonzero fiat leg) is
+    # checked separately below (check 9).
     for row in rows:
+        if row.type in ("CORRECTION", "BUY_COST_CORRECTION"):
+            continue
         if row.amount == Decimal("0"):
             issues.append(_issue(
                 severity=WARNING,
@@ -355,6 +378,210 @@ def health_report(
                 "Repair: REVERSAL of this trade + re-entry as SWAP."
             ),
         ))
+
+    # ── Check 9: CORRECTION group validity ────────────────────────────────────
+    # Groups any id that has at least one CORRECTION-type row (catches
+    # malformed/mixed groups too, not just clean ones) and validates its
+    # structure via the single source of truth in core/correction.py.
+    _correction_group_ids: Set[str] = {
+        r.id for r in rows if r.type == "CORRECTION" and r.id
+    }
+    _rows_by_id: Dict[str, List[RawRow]] = defaultdict(list)
+    for row in rows:
+        if row.id:
+            _rows_by_id[row.id].append(row)
+
+    # All trade ids ever seen — used to check that a correction's
+    # correction_of actually references something real. Deliberately
+    # includes OTHER correction ids too: undoing a wrong correction with a
+    # new correction referencing that correction's own id (correction-of-a-
+    # correction) is the explicitly supported way to fix a mistake — see
+    # core/correction.py module docstring.
+    _known_trade_ids: Set[str] = {r.id for r in rows if r.id}
+
+    for corr_id in sorted(_correction_group_ids):
+        group_rows = _rows_by_id.get(corr_id, [])
+        ok, errs = validate_correction_group(group_rows, fiat_set)
+        first = group_rows[0] if group_rows else None
+        for err in errs:
+            issues.append(_issue(
+                severity=ERROR,
+                kind="invalid_correction_group",
+                trade_id=corr_id,
+                asset=(first.asset if first else ""),
+                timestamp=(_ts_str(first) if first else ""),
+                message=f"Correction group {corr_id!r} is structurally invalid: {err}",
+                hint="A valid CORRECTION group is exactly one zero-amount "
+                     "position marker leg + one nonzero fiat delta leg, "
+                     "matching venue/account/currency (see core/correction.py).",
+            ))
+
+        # correction_of must reference a real, existing trade id.
+        note = first.note if first else None
+        parsed = parse_correction_note(note)
+        if parsed is not None:
+            correction_of = parsed.get("correction_of")
+            if correction_of and correction_of not in _known_trade_ids:
+                issues.append(_issue(
+                    severity=ERROR,
+                    kind="correction_of_unknown_trade",
+                    trade_id=corr_id,
+                    asset=(first.asset if first else ""),
+                    timestamp=(_ts_str(first) if first else ""),
+                    message=(
+                        f"Correction group {corr_id!r} references correction_of="
+                        f"{correction_of!r}, which does not exist anywhere else in the ledger."
+                    ),
+                    hint="Verify the original trade_id in the correction's note is correct.",
+                ))
+        else:
+            issues.append(_issue(
+                severity=WARNING,
+                kind="correction_note_unparseable",
+                trade_id=corr_id,
+                asset=(first.asset if first else ""),
+                timestamp=(_ts_str(first) if first else ""),
+                message=f"Correction group {corr_id!r} has a note that doesn't match the expected format.",
+                hint="Use core.correction.build_correction_note() to build correction notes.",
+            ))
+
+        # A CORRECTION must never itself be the target of a standard REVERSAL
+        # — reversal-of-a-profitable-SELL re-adds cost at proceeds value, not
+        # at true removed cost, which would double the error for a
+        # correction too (see Phase 3B/3C analysis). Detect via the id
+        # convention reversal_service.py uses: "REV_{original_id}_...".
+        rev_prefix = f"REV_{corr_id}_"
+        reversed_by = {r.id for r in rows if r.id and r.id.startswith(rev_prefix)}
+        if reversed_by:
+            issues.append(_issue(
+                severity=ERROR,
+                kind="correction_reversed_via_standard_reversal",
+                trade_id=corr_id,
+                asset=(first.asset if first else ""),
+                timestamp=(_ts_str(first) if first else ""),
+                message=(
+                    f"Correction group {corr_id!r} appears to have been reversed "
+                    f"via the standard REVERSAL mechanism ({sorted(reversed_by)}) — "
+                    "this produces an incorrect result for CORRECTION groups."
+                ),
+                hint="Undo a wrong correction with a NEW correction carrying the "
+                     "opposite delta, never with reverse_trade()/REVERSAL.",
+            ))
+
+    # ── Check 10: BUY_COST_CORRECTION group validity ──────────────────────────
+    # Same shape as Check 9, plus the type's own defining invariant:
+    # correction_of must reference a trade group that contains a BUY leg of
+    # the SAME asset as the marker (core/buy_cost_correction.py — this is
+    # NOT a general cost_basis adjustment mechanism).
+    _bcc_group_ids: Set[str] = {
+        r.id for r in rows if r.type == "BUY_COST_CORRECTION" and r.id
+    }
+
+    for corr_id in sorted(_bcc_group_ids):
+        group_rows = _rows_by_id.get(corr_id, [])
+        ok, errs = validate_buy_cost_correction_group(group_rows, fiat_set)
+        first = group_rows[0] if group_rows else None
+        for err in errs:
+            issues.append(_issue(
+                severity=ERROR,
+                kind="invalid_buy_cost_correction_group",
+                trade_id=corr_id,
+                asset=(first.asset if first else ""),
+                timestamp=(_ts_str(first) if first else ""),
+                message=f"BUY_COST_CORRECTION group {corr_id!r} is structurally invalid: {err}",
+                hint="A valid BUY_COST_CORRECTION group is exactly one zero-amount "
+                     "position marker leg + one nonzero cash delta leg, "
+                     "matching venue/currency (see core/buy_cost_correction.py).",
+            ))
+
+        marker = next((r for r in group_rows if r.asset.upper() not in fiat_set), first)
+        note = marker.note if marker else None
+        parsed = parse_buy_cost_correction_note(note)
+        if parsed is not None:
+            correction_of = parsed.get("correction_of")
+            if correction_of and correction_of not in _known_trade_ids:
+                issues.append(_issue(
+                    severity=ERROR,
+                    kind="buy_cost_correction_of_unknown_trade",
+                    trade_id=corr_id,
+                    asset=(marker.asset if marker else ""),
+                    timestamp=(_ts_str(marker) if marker else ""),
+                    message=(
+                        f"BUY_COST_CORRECTION group {corr_id!r} references correction_of="
+                        f"{correction_of!r}, which does not exist anywhere else in the ledger."
+                    ),
+                    hint="Verify the original BUY trade_id in the correction's note is correct.",
+                ))
+            elif correction_of and marker:
+                original_buy_rows = [
+                    r for r in rows
+                    if r.id == correction_of and r.type == "BUY"
+                    and r.asset.upper() == marker.asset.upper()
+                ]
+                if not original_buy_rows:
+                    issues.append(_issue(
+                        severity=ERROR,
+                        kind="buy_cost_correction_of_not_a_buy",
+                        trade_id=corr_id,
+                        asset=marker.asset,
+                        timestamp=_ts_str(marker),
+                        message=(
+                            f"BUY_COST_CORRECTION group {corr_id!r} references correction_of="
+                            f"{correction_of!r}, but that trade has no BUY leg of asset "
+                            f"{marker.asset!r}. BUY_COST_CORRECTION may only correct an "
+                            "actual historical BUY's cost."
+                        ),
+                        hint="Verify correction_of points at the correct original BUY trade.",
+                    ))
+        else:
+            issues.append(_issue(
+                severity=WARNING,
+                kind="buy_cost_correction_note_unparseable",
+                trade_id=corr_id,
+                asset=(marker.asset if marker else ""),
+                timestamp=(_ts_str(marker) if marker else ""),
+                message=f"BUY_COST_CORRECTION group {corr_id!r} has a note that doesn't match the expected format.",
+                hint="Use core.buy_cost_correction.build_buy_cost_correction_note() to build correction notes.",
+            ))
+
+        rev_prefix = f"REV_{corr_id}_"
+        reversed_by = {r.id for r in rows if r.id and r.id.startswith(rev_prefix)}
+        if reversed_by:
+            issues.append(_issue(
+                severity=ERROR,
+                kind="buy_cost_correction_reversed_via_standard_reversal",
+                trade_id=corr_id,
+                asset=(marker.asset if marker else ""),
+                timestamp=(_ts_str(marker) if marker else ""),
+                message=(
+                    f"BUY_COST_CORRECTION group {corr_id!r} appears to have been reversed "
+                    f"via the standard REVERSAL mechanism ({sorted(reversed_by)}) — "
+                    "this produces an incorrect result for BUY_COST_CORRECTION groups."
+                ),
+                hint="Undo a wrong correction with a NEW BUY_COST_CORRECTION carrying the "
+                     "opposite cash_delta, never with reverse_trade()/REVERSAL.",
+            ))
+
+    # ── Check 11: PORTFOLIO_CONTRIBUTION / PORTFOLIO_WITHDRAWAL group validity ─
+    _boundary_group_ids: Set[str] = {
+        r.id for r in rows if r.type in ("PORTFOLIO_CONTRIBUTION", "PORTFOLIO_WITHDRAWAL") and r.id
+    }
+    for boundary_id in sorted(_boundary_group_ids):
+        group_rows = _rows_by_id.get(boundary_id, [])
+        ok, errs = validate_portfolio_boundary_group(group_rows)
+        first = group_rows[0] if group_rows else None
+        for err in errs:
+            issues.append(_issue(
+                severity=ERROR,
+                kind="invalid_portfolio_boundary_group",
+                trade_id=boundary_id,
+                asset=(first.asset if first else ""),
+                timestamp=(_ts_str(first) if first else ""),
+                message=f"Portfolio boundary group {boundary_id!r} is structurally invalid: {err}",
+                hint="A valid PORTFOLIO_CONTRIBUTION/WITHDRAWAL group is exactly 2 rows, "
+                     "same asset/currency, summing to 0, at least one leg with an "
+                     "explicit account (see core/portfolio_boundary.py).",
+            ))
 
     # ── Sort: severity, kind, trade_id, asset, timestamp ─────────────────────
     issues.sort(key=lambda i: (

@@ -74,6 +74,15 @@ def _normalize_row(row_dict: dict, row_index: int = 0) -> Tuple[Optional[RawRow]
         if row_id == "" or row_id.lower() == "nan":
             row_id = None
 
+    # account je OPTIONAL sloupec (cash-accounts vrstva). Legacy soubory bez
+    # tohoto sloupce (row_dict.get vrátí None) načtou account=None beze změny
+    # chování — stejně jako dřív.
+    account = row_dict.get("account")
+    if account is not None:
+        account = str(account).strip()
+        if account == "" or account.lower() in ("nan", "none"):
+            account = None
+
     if errors:
         return None, {
             "row_index": row_index,
@@ -91,6 +100,7 @@ def _normalize_row(row_dict: dict, row_index: int = 0) -> Tuple[Optional[RawRow]
         price=price,
         venue=venue,
         note=note,
+        account=account,
     ), None
 
 

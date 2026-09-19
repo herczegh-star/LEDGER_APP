@@ -22,7 +22,17 @@ def validate_row(row: RawRow) -> Tuple[bool, List[str]]:
 
     try:
         amt = Decimal(str(row.amount))
-        if amt == 0:
+        # CORRECTION and BUY_COST_CORRECTION are the sole exceptions: their
+        # non-fiat POSITION MARKER leg is required to be amount=0 (no
+        # physical quantity ever moves for a correction — see
+        # core/correction.py, core/buy_cost_correction.py). All other types
+        # keep the existing rule: amount=0 has no economic meaning and stays
+        # rejected. Group-level correctness (exactly one marker + one fiat
+        # delta leg, marker asset not fiat, delta != 0, matching
+        # venue/account/currency) is NOT checked here — validate_row() is
+        # single-row/syntactic only; see validate_correction_group() /
+        # validate_buy_cost_correction_group() for that.
+        if amt == 0 and row.type not in ("CORRECTION", "BUY_COST_CORRECTION"):
             errors.append("amount je 0.")
     except (InvalidOperation, TypeError):
         errors.append(f"amount není platné číslo: {row.amount}")

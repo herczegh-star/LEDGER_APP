@@ -86,6 +86,17 @@ def compute_positions(
     fiat_by_id: Dict[str, Decimal] = {}
     # fee_by_id[trade_id] = total absolute fiat fee on the same trade
     fee_by_id: Dict[str, Decimal] = {}
+    # correction_delta_by_id[correction_id] = signed fiat delta of a
+    # CORRECTION group's fiat leg. Deliberately a SEPARATE dict from
+    # fiat_by_id/fee_by_id — CORRECTION is NOT in _INVESTMENT_TYPES, so it
+    # can never collide with or be swept into normal BUY/SELL/REVERSAL/
+    # STAKING indexing. See core/correction.py for the row shape this reads.
+    correction_delta_by_id: Dict[str, Decimal] = {}
+    # buy_cost_correction_cash_delta_by_id[correction_id] = signed cash delta
+    # of a BUY_COST_CORRECTION group's cash leg. Separate again from every
+    # dict above — this type adjusts cost_basis (via cost_basis_delta =
+    # -cash_delta), never realized_pnl. See core/buy_cost_correction.py.
+    buy_cost_correction_cash_delta_by_id: Dict[str, Decimal] = {}
 
     for row in sorted_rows:
         asset = row.asset.upper()
@@ -99,6 +110,19 @@ def compute_positions(
             fee_by_id[row.id] = (
                 fee_by_id.get(row.id, Decimal("0")) + abs(row.amount)
             )
+        elif row.type == "CORRECTION":
+            # Fiat delta leg of a CORRECTION group (see core/correction.py).
+            # This dict entry is the ONLY thing the fiat leg contributes to
+            # position accounting — it is never added to realized_pnl
+            # directly (the main loop below explicitly skips fiat CORRECTION
+            # rows); the cash engine (core/reports/cash.py) picks it up
+            # independently and unconditionally, unaffected by this module.
+            correction_delta_by_id[row.id] = row.amount
+        elif row.type == "BUY_COST_CORRECTION":
+            # Cash leg of a BUY_COST_CORRECTION group (see
+            # core/buy_cost_correction.py). Same isolation pattern as
+            # CORRECTION above — cash.py reads this leg independently.
+            buy_cost_correction_cash_delta_by_id[row.id] = row.amount
 
     # Trade ids that contain a TRANSFER leg.  A TRANSFER's cost basis flows only
     # through the dedicated TRANSFER branch (and its cross-venue seed); a
@@ -121,6 +145,48 @@ def compute_positions(
 
     for row in sorted_rows:
         asset = row.asset.upper()
+
+        # ── CORRECTION: fully isolated branch, before any existing logic ───
+        # Applies ONLY to the non-fiat POSITION MARKER leg (amount == 0) —
+        # never to quantity or cost_basis, and the fiat delta leg is
+        # explicitly skipped here (it never touches realized_pnl on its
+        # own; the position side only ever reads the delta via
+        # correction_delta_by_id, indexed by the shared group id).
+        # A malformed marker (nonzero amount) is deliberately left alone —
+        # no delta is applied, no exception is raised; health_service.py
+        # flags structurally invalid CORRECTION groups separately.
+        if row.type == "CORRECTION":
+            if asset in fiat:
+                continue
+            if row.amount == Decimal("0"):
+                if asset not in states:
+                    states[asset] = _State()
+                delta = correction_delta_by_id.get(row.id, Decimal("0"))
+                states[asset].realized_pnl += delta
+            continue
+        # ── end CORRECTION branch — everything below is unchanged ──────────
+
+        # ── BUY_COST_CORRECTION: fully isolated branch ──────────────────────
+        # Applies ONLY to the non-fiat POSITION MARKER leg (amount == 0) —
+        # never to quantity. Adjusts cost_basis (never realized_pnl) by
+        # -cash_delta, per the type's structural invariant (see
+        # core/buy_cost_correction.py). WAC is never stored — it is always
+        # cost_basis / quantity, computed downstream in Step 4, so it
+        # "corrects itself" automatically once cost_basis changes here.
+        # A malformed marker (nonzero amount) is deliberately left alone —
+        # no delta is applied; health_service.py flags structurally invalid
+        # groups separately.
+        if row.type == "BUY_COST_CORRECTION":
+            if asset in fiat:
+                continue
+            if row.amount == Decimal("0"):
+                if asset not in states:
+                    states[asset] = _State()
+                cash_delta = buy_cost_correction_cash_delta_by_id.get(row.id, Decimal("0"))
+                states[asset].cost_basis += -cash_delta
+            continue
+        # ── end BUY_COST_CORRECTION branch — everything below is unchanged ──
+
         if asset in fiat:
             continue                          # skip fiat quote legs
         if row.type not in _INVESTMENT_TYPES:

@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 import flet as ft
 
-from core.services.ui_facade import get_asset_detail
+from core.services.ui_facade import get_asset_detail, get_asset_proceeds
 
 # ── Color palette (consistent with app_flet.py) ────────────────────────────
 BG_CARD = "#0f1621"
@@ -116,6 +116,8 @@ def build_asset_detail_view(
                      color=_color(pos.unrealized_pnl)),
                 stat("ROI",        _pct(pos.roi_total),
                      color=_color(pos.roi_total)),
+                stat("Realized PnL", _czk(pos.realized_pnl, sign=True),
+                     color=_color(pos.realized_pnl)),
             ],
             spacing=32,
             wrap=True,
@@ -193,6 +195,83 @@ def build_asset_detail_view(
         padding=16,
     )
 
+    # ── Realized / Proceeds ──────────────────────────────────────────────────
+    # Neutral labels (Quote amount / Fee / Cash impact) — NOT "gross"/"net".
+    # The ledger data alone cannot confirm which semantics a source venue
+    # used (see Phase 1 HYPE fixture); we never assert an interpretation.
+    proceeds_col_defs = [
+        ft.DataColumn(ft.Text("Date",          color=T_MUT, size=11)),
+        ft.DataColumn(ft.Text("Quantity Sold", color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("Quote Amount",  color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("Fee",           color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("Cash Impact",   color=T_MUT, size=11), numeric=True),
+        ft.DataColumn(ft.Text("Cash Account",  color=T_MUT, size=11)),
+    ]
+
+    proceeds_rows = get_asset_proceeds(db_path, asset)
+    proceeds_data_rows = [
+        ft.DataRow(cells=[
+            _cell(pr.date[:10]),
+            _ncell(_amt(pr.quantity_sold, detail.asset)),
+            _ncell(f"{_czk(pr.quote_amount)} *" if pr.has_correction else _czk(pr.quote_amount)),
+            _ncell(_czk(pr.fee) if pr.fee is not None else "—"),
+            _ncell(f"{_czk(pr.cash_impact)} *" if pr.has_correction else _czk(pr.cash_impact)),
+            _cell(pr.cash_account if pr.cash_account else "Unassigned Cash",
+                  color=T_PRI if pr.cash_account else T_MUT),
+        ])
+        for pr in proceeds_rows
+    ]
+
+    if not proceeds_data_rows:
+        proceeds_data_rows = [ft.DataRow(cells=[
+            _cell("Žádné SELL transakce", color=T_MUT),
+            *[ft.DataCell(ft.Text("")) for _ in range(5)],
+        ])]
+
+    # Legend for correction-adjusted rows (Quote Amount / Cash Impact reflect
+    # the corrected economic result, not the originally-recorded figure —
+    # see core/reports/proceeds.py's module docstring).
+    correction_legend_lines = [
+        ft.Text(
+            f"* {pr.date[:10]} {detail.asset}: includes applied CORRECTION "
+            f"{_czk(pr.correction_delta, sign=True)} "
+            f"(recorded {_czk(pr.recorded_quote_amount)} → corrected {_czk(pr.quote_amount)})"
+            + (f", credited to {', '.join(pr.correction_accounts)}" if pr.correction_accounts else ""),
+            size=10, color=T_MUT, italic=True,
+        )
+        for pr in proceeds_rows if pr.has_correction
+    ]
+
+    proceeds_table = ft.Container(
+        content=ft.Column(
+            [
+                ft.Text("Realized / Proceeds", size=14,
+                        weight=ft.FontWeight.W_600, color=T_PRI),
+                ft.Row(
+                    [ft.DataTable(
+                        columns=proceeds_col_defs,
+                        rows=proceeds_data_rows,
+                        border=ft.border.all(1, BORDER),
+                        border_radius=8,
+                        vertical_lines=ft.BorderSide(1, BORDER),
+                        heading_row_color=BG_HDR,
+                        data_row_color={"hovered": "#1e2a3a"},
+                        column_spacing=24,
+                        horizontal_margin=16,
+                        data_text_style=ft.TextStyle(size=11),
+                    )],
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                *correction_legend_lines,
+            ],
+            spacing=12,
+        ),
+        bgcolor=BG_CARD,
+        border=ft.border.all(1, "#223046"),
+        border_radius=12,
+        padding=16,
+    )
+
     # ── Main layout ────────────────────────────────────────────────────────────
     return ft.Container(
         expand=True,
@@ -204,6 +283,8 @@ def build_asset_detail_view(
                 summary_card,
                 ft.Container(height=16),
                 venue_table,
+                ft.Container(height=16),
+                proceeds_table,
             ],
             spacing=0,
             expand=True,

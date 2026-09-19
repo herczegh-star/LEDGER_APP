@@ -24,8 +24,19 @@ def _blog(msg: str) -> None:
 
 _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 
-from core.services.ui_facade import create_app_context, create_db, get_dashboard_snapshot, set_db_path
+from core.services.ui_facade import (
+    create_app_context, create_db,
+    get_dashboard_snapshot, get_investment_cash_accounts_view,
+    get_investment_cash_reserve, set_db_path,
+)
+from ui.refresh_guard import RefreshGuard
 from core.services import icon_service
+
+# Phase 2: "Total Managed Value" (Crypto Value + Cash Reserve) is prepared but
+# NOT wired into the primary Total Value/ROI/PnL KPIs — those keep their
+# current meaning (Crypto Value only). Flip this to preview the experimental
+# combined KPI locally; it is off by default and not exposed in any UI control.
+_SHOW_TOTAL_MANAGED_VALUE_EXPERIMENTAL = False
 
 # ── Icons — served from user data dir (~/.ledger_app/icons/) ─────────────────
 icon_service.setup()   # migrate bundled icons + create dir
@@ -188,11 +199,18 @@ def _main_view_impl(page: ft.Page) -> None:
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
     snap_holder: list = [None]   # last DashboardSnapshotDTO
     privacy = [False]  # privacy mode — hides sensitive KPI values
+    _refresh_guard = RefreshGuard()  # guards refresh() background reloads — see ui/refresh_guard.py
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
     w_val = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
     w_pnl = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
     w_roi = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_MUT)
+    # Experimental, gated (see _SHOW_TOTAL_MANAGED_VALUE_EXPERIMENTAL above):
+    w_managed_val = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=T_PRI)
+
+    # ── Cash Reserve block (Phase 2) — separate, read-only, NOT part of the
+    # Total Value / ROI / PnL / Cost Basis KPIs above ──────────────────────────
+    cash_reserve_col = ft.Column(spacing=6)
 
     # Dynamic regions
     pills_row   = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
@@ -229,6 +247,64 @@ def _main_view_impl(page: ft.Page) -> None:
             w_val.value = "—"; w_val.color = T_PRI
             w_pnl.value = "—"; w_pnl.color = T_MUT
             w_roi.value = "—"; w_roi.color = T_MUT
+
+    # ── Cash Reserve update (Phase 2, role-aware since Model B) ─────────────────
+    def update_cash_reserve() -> None:
+        """Read-only Cash Reserve breakdown. Does NOT feed into update_kpis()
+        above — Total Value / ROI / PnL / Cost Basis keep their current
+        (crypto-only) meaning. 'external' is excluded.
+
+        ROLE-AWARE: uses get_investment_cash_accounts_view() /
+        get_investment_cash_reserve() — only accounts whose role resolves to
+        INVESTMENT_CASH appear here. A PERSONAL-role account (e.g. a mixed
+        bank account carrying a few tagged correction cash legs) must never
+        show up as portfolio cash reserve, even though it remains fully
+        visible in the general Cash Accounts screen
+        (ui/modules/cash_view.py, which still uses the role-unaware
+        get_cash_accounts_view() on purpose — that screen shows ALL tracked
+        accounts, not just the portfolio-scoped ones)."""
+        if privacy[0]:
+            cash_reserve_col.controls = [
+                ft.Text(_HIDDEN, size=13, color=T_MUT),
+            ]
+            if _SHOW_TOTAL_MANAGED_VALUE_EXPERIMENTAL:
+                w_managed_val.value = _HIDDEN
+                w_managed_val.color = T_MUT
+            return
+
+        rows_dto = get_investment_cash_accounts_view(db_path)
+        if not rows_dto:
+            cash_reserve_col.controls = [
+                ft.Text("Žádné cash účty zatím nejsou v ledgeru.", size=12, color=T_MUT),
+            ]
+        else:
+            chips = []
+            for r in rows_dto:
+                label = f"{r.venue.title()} / {r.account or 'Unassigned Cash'}"
+                n = f"{abs(r.balance):,.2f}".replace(",", " ")
+                sign = "-" if r.balance < Decimal("0") else ""
+                chips.append(ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text(label, size=11, color=T_MUT),
+                            ft.Text(f"{sign}{n} {r.currency}", size=14,
+                                    weight=ft.FontWeight.W_600, color=T_PRI),
+                        ],
+                        spacing=2, tight=True,
+                    ),
+                    bgcolor=BG_CARD, border=ft.border.all(1, "#223046"),
+                    border_radius=10, padding=ft.padding.symmetric(10, 14),
+                ))
+            cash_reserve_col.controls = [ft.Row(chips, spacing=10, wrap=True)]
+
+        if _SHOW_TOTAL_MANAGED_VALUE_EXPERIMENTAL:
+            reserve = get_investment_cash_reserve(db_path)
+            reserve_czk = reserve.get("CZK", Decimal("0"))
+            crypto_vals = [p.value for p in raw if p.value is not None]
+            crypto_total = sum(crypto_vals, Decimal("0")) if crypto_vals else Decimal("0")
+            managed = crypto_total + reserve_czk
+            w_managed_val.value = _czk(managed)
+            w_managed_val.color = T_PRI
 
     # ── Sort pills ─────────────────────────────────────────────────────────────
     def build_pills() -> None:
@@ -307,6 +383,7 @@ def _main_view_impl(page: ft.Page) -> None:
                 stat("Net Invested",   _czk(p.cost_basis)),
                 stat("Spot Price",     _czk(p.spot_price)),
                 stat("Value",          _czk(p.value)),
+                stat("Realized PnL",   _czk(p.realized_pnl, sign=True)),
                 stat("ROI (Realized)", _pct_pts(roi_real)),
             ]
 
@@ -407,19 +484,63 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── Refresh ────────────────────────────────────────────────────────────────
     def refresh(e=None) -> None:
+        """Reload the dashboard snapshot in the background (non-blocking).
+
+        get_dashboard_snapshot() calls price_provider.get_prices(), a
+        blocking network call. Running it synchronously on the Flet
+        event-loop thread (the old behaviour) freezes the whole UI —
+        observed as a stuck "Working..." overlay whenever the user
+        navigates back to Dashboard. Fixed by mirroring the same
+        background-thread + page.run_task() pattern already used for the
+        very first load (see _load_prices() / _finish_on_ui_thread() below).
+
+        RefreshGuard (ui/refresh_guard.py) handles three things: skipping a
+        click while a refresh is already in flight, discarding a stale
+        result if a newer refresh started meanwhile, and always releasing
+        the in-progress flag (success, exception, or discard) so a future
+        refresh is never permanently blocked.
+        """
         import time as _time
         nonlocal raw
-        _t0 = _time.perf_counter()
-        snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
-        _t1 = _time.perf_counter()
-        _blog(f"TIMING  refresh: get_dashboard_snapshot() took {(_t1-_t0)*1000:.1f}ms  positions={len(snap.positions)}")
-        snap_holder[0] = snap
-        raw = snap.positions
 
-        update_kpis()
-        build_pills()
-        build_cards()
-        page.update()
+        generation = _refresh_guard.try_begin()
+        if generation is None:
+            _blog("refresh() skipped - already in progress")
+            return
+
+        def _worker() -> None:
+            _t0 = _time.perf_counter()
+            _snap = None
+            try:
+                _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+                _blog(f"TIMING  refresh: get_dashboard_snapshot() took {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
+            except Exception as exc:
+                _blog(f"ERROR in refresh() background worker: {exc}")
+
+            async def _apply_on_ui_thread() -> None:
+                nonlocal raw
+                try:
+                    if not _refresh_guard.is_current(generation):
+                        _blog(f"refresh() generation {generation} superseded - discarding stale result")
+                        return
+                    if _snap is not None:
+                        snap_holder[0] = _snap
+                        raw = _snap.positions
+                        update_kpis()
+                        update_cash_reserve()
+                        build_pills()
+                        build_cards()
+                        page.update()
+                finally:
+                    _refresh_guard.end()
+
+            try:
+                page.run_task(_apply_on_ui_thread)
+            except Exception as exc:
+                _blog(f"ERROR scheduling refresh() UI update: {exc}")
+                _refresh_guard.end()
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── Layout helper ──────────────────────────────────────────────────────────
     def kpi_box(label: str, widget: ft.Text) -> ft.Container:
@@ -447,9 +568,17 @@ def _main_view_impl(page: ft.Page) -> None:
                         kpi_box("Portfolio Value", w_val),
                         kpi_box("Unrealized PnL", w_pnl),
                         kpi_box("ROI", w_roi),
+                        *(
+                            [kpi_box("Total Managed Value (experimental)", w_managed_val)]
+                            if _SHOW_TOTAL_MANAGED_VALUE_EXPERIMENTAL else []
+                        ),
                     ],
                     spacing=16,
                 ),
+                ft.Container(height=16),
+                ft.Text("CASH RESERVE", size=12, weight=ft.FontWeight.W_600, color=T_MUT),
+                ft.Container(height=6),
+                cash_reserve_col,
                 ft.Container(height=16),
                 pills_row,
                 ft.Container(height=12),
@@ -479,6 +608,11 @@ def _main_view_impl(page: ft.Page) -> None:
     _tick("import ui.modules.venue_view done")
     _venues_view, _run_venues = _build_vv(page, db_path, price_provider=_price_provider, fiat=_price_fiat)
     _tick("build_venue_view() done")
+
+    from ui.modules.cash_view import build_cash_view as _build_cv
+    _tick("import ui.modules.cash_view done")
+    _cash_view, _run_cash = _build_cv(page, db_path)
+    _tick("build_cash_view() done")
 
     from ui.modules.analysis_view import build_analysis_view as _build_av
     _tick("import ui.modules.analysis_view done")
@@ -517,6 +651,9 @@ def _main_view_impl(page: ft.Page) -> None:
         elif idx == 5:
             _content.content = _analysis_view
             _run_analysis()
+        elif idx == 6:
+            _content.content = _cash_view
+            _run_cash()
         else:
             _content.content = _ledger_view
             _run_ledger()
@@ -531,6 +668,7 @@ def _main_view_impl(page: ft.Page) -> None:
         (ft.Icons.HEALTH_AND_SAFETY_OUTLINED,ft.Icons.HEALTH_AND_SAFETY,     "Health"),
         (ft.Icons.ACCOUNT_BALANCE_OUTLINED,  ft.Icons.ACCOUNT_BALANCE,       "Venues"),
         (ft.Icons.ANALYTICS_OUTLINED,        ft.Icons.ANALYTICS,             "Analysis"),
+        (ft.Icons.PAYMENTS_OUTLINED,         ft.Icons.PAYMENTS,              "Cash"),
         (ft.Icons.LIST_ALT_OUTLINED,         ft.Icons.LIST_ALT,              "Ledger"),
     ]
     _nav_idx = [0]
@@ -611,6 +749,7 @@ def _main_view_impl(page: ft.Page) -> None:
         privacy[0] = not privacy[0]
         _eye_btn.icon = ft.Icons.VISIBILITY_OFF if privacy[0] else ft.Icons.VISIBILITY
         update_kpis()
+        update_cash_reserve()
         page.update()
 
     _eye_btn.on_click = on_toggle_privacy
@@ -735,6 +874,7 @@ def _main_view_impl(page: ft.Page) -> None:
                 snap_holder[0] = _snap
                 raw = _snap.positions
                 update_kpis()
+                update_cash_reserve()
                 build_pills()
                 build_cards()
                 _content.content = _dashboard_view

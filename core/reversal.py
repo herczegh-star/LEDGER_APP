@@ -10,7 +10,7 @@ def create_reversal(original: RawRow, note_prefix: str = "reversal of") -> RawRo
     - Nové auto-generované id
     - type = REVERSAL
     - Timestamp = nyní
-    - Stejný asset, currency, venue
+    - Stejný asset, currency, venue, account
     - Opačný amount
     - price zkopírována (informativní)
     - note odkazuje na původní id
@@ -25,6 +25,7 @@ def create_reversal(original: RawRow, note_prefix: str = "reversal of") -> RawRo
         price=original.price,
         venue=original.venue,
         note=f"{note_prefix} {original.id}",
+        account=original.account,
     )
 
 

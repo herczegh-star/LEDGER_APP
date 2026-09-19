@@ -76,6 +76,7 @@ def build_reversal_rows(
             price=row.price,
             venue=row.venue,
             note=note,
+            account=row.account,
         ))
 
     return reversal_rows
@@ -110,6 +111,24 @@ def reverse_trade(db_path: str, trade_id: str) -> List[RawRow]:
             raise ValueError(
                 f"No rows found for trade_id '{trade_id}'. "
                 "Check the ID and try again."
+            )
+        if any(r.type == "CORRECTION" for r in original_rows):
+            raise ValueError(
+                f"Trade '{trade_id}' is a CORRECTION group — it cannot be "
+                "reversed via the standard REVERSAL mechanism. Reversal-of-a-"
+                "profitable-SELL re-adds cost at proceeds value, not at the "
+                "true removed cost, which would double the error for a "
+                "correction too. Undo a wrong correction with a NEW "
+                "correction carrying the opposite delta instead "
+                "(see core/correction.py)."
+            )
+        if any(r.type == "BUY_COST_CORRECTION" for r in original_rows):
+            raise ValueError(
+                f"Trade '{trade_id}' is a BUY_COST_CORRECTION group — it cannot "
+                "be reversed via the standard REVERSAL mechanism, for the same "
+                "reason as CORRECTION groups (see above). Undo a wrong "
+                "BUY_COST_CORRECTION with a NEW BUY_COST_CORRECTION carrying "
+                "the opposite cash_delta instead (see core/buy_cost_correction.py)."
             )
         prefix = f"REV_{trade_id}_"
         existing = store.conn.execute(

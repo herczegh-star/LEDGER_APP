@@ -24,7 +24,7 @@ from core.ledger_store import LedgerStore
 from core.services.report_service import ReportKind, get_positions_report, get_report
 
 # Canonical ledger column order (matches unified_format_raw schema)
-_LEDGER_COLS = ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note"]
+_LEDGER_COLS = ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note", "account"]
 
 _FIAT_DEFAULT: FrozenSet[str] = frozenset({"EUR", "CZK"})
 
@@ -58,7 +58,7 @@ def export_ledger_csv(db_path: str, out_path: str) -> str:
     """Export all ledger rows to a CSV file.
 
     Columns (fixed order): id, timestamp, type, asset, amount,
-    currency, price, venue, note.
+    currency, price, venue, note, account.
 
     Args:
         db_path:  Path to the SQLite ledger database.

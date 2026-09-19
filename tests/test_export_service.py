@@ -97,7 +97,7 @@ def test_export_ledger_csv_has_header():
         with open(out, encoding="utf-8-sig") as f:
             reader = csv.reader(f)
             header = next(reader)
-        assert header == ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note"]
+        assert header == ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note", "account"]
     finally:
         os.unlink(db_path)
         if os.path.exists(out):
