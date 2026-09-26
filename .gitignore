@@ -7,3 +7,19 @@ __pycache__/
 dist/
 build/
 .flet/
+
+# Local Claude Code settings (per-machine, never shared)
+.claude/settings.local.json
+
+# Runtime output, not source
+logs/
+exports/
+*.log
+
+# OS/editor junk
+desktop.ini
+
+# Stray local artifacts (accidental redirects/dumps, not source)
+/nul
+/trade
+*.zip

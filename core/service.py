@@ -44,7 +44,7 @@ class ExportFilter:
     time_to: Optional[datetime] = None
 
 
-_EXPORT_FIELDS = ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note"]
+_EXPORT_FIELDS = ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note", "account"]
 
 
 class LedgerService:

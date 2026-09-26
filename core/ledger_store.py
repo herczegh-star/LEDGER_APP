@@ -26,10 +26,18 @@ class LedgerStore:
                 price TEXT,
                 venue TEXT NOT NULL,
                 note TEXT,
+                account TEXT,
                 row_fp TEXT NOT NULL,
                 imported_at TEXT NOT NULL
             )
         """)
+        # Idempotent additive migration for DBs created before the cash-accounts
+        # feature: detect a missing `account` column and add it. Never touches
+        # row_fp / idx_row_fp — legacy dedup mechanism is unchanged (Phase 0
+        # decision: Varianta 1). Safe to run on every connect.
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(ledger)").fetchall()}
+        if "account" not in cols:
+            self.conn.execute("ALTER TABLE ledger ADD COLUMN account TEXT")
         self.conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_row_fp ON ledger(row_fp)
         """)
@@ -40,11 +48,12 @@ class LedgerStore:
 
     def insert(self, row: RawRow) -> bool:
         fp = row.fingerprint()
+        account_norm = (row.account or "").strip() or None
         try:
             self.conn.execute(
                 """INSERT INTO ledger
-                   (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (id, timestamp, type, asset, amount, currency, price, venue, note, account, row_fp, imported_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row.id or "",
                     row.timestamp.isoformat(),
@@ -55,6 +64,7 @@ class LedgerStore:
                     str(row.price) if row.price is not None else None,
                     row.venue.lower(),
                     row.note,
+                    account_norm,
                     fp,
                     datetime.now().isoformat(),
                 ),
@@ -75,6 +85,11 @@ class LedgerStore:
         return {"inserted": inserted, "skipped": skipped}
 
     def _row_to_rawrow(self, r: sqlite3.Row) -> RawRow:
+        # imported_at: audit-only creation time, read straight from the
+        # (pre-existing) DB column — never used for ordering/accounting.
+        # Guarded with .keys() so callers constructing sqlite3.Row from a
+        # narrower SELECT (e.g. asset_balances()) never break here.
+        imported_at_raw = r["imported_at"] if "imported_at" in r.keys() else None
         return RawRow(
             id=r["id"],
             timestamp=datetime.fromisoformat(r["timestamp"]),
@@ -85,6 +100,8 @@ class LedgerStore:
             price=Decimal(r["price"]) if r["price"] else None,
             venue=r["venue"],
             note=r["note"],
+            account=r["account"],
+            imported_at=datetime.fromisoformat(imported_at_raw) if imported_at_raw else None,
         )
 
     def timeline(self) -> List[RawRow]:
@@ -142,18 +159,20 @@ class LedgerStore:
         """
         fp_a = row_a.fingerprint()
         fp_b = row_b.fingerprint()
+        account_a = (row_a.account or "").strip() or None
+        account_b = (row_b.account or "").strip() or None
         now = datetime.now().isoformat()
         results = [False, False]
         with self.conn:
             try:
                 self.conn.execute(
                     """INSERT INTO ledger
-                       (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (id, timestamp, type, asset, amount, currency, price, venue, note, account, row_fp, imported_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (row_a.id or "", row_a.timestamp.isoformat(), row_a.type,
                      row_a.asset.upper(), str(row_a.amount), row_a.currency.upper(),
                      str(row_a.price) if row_a.price is not None else None,
-                     row_a.venue.lower(), row_a.note, fp_a, now),
+                     row_a.venue.lower(), row_a.note, account_a, fp_a, now),
                 )
                 results[0] = True
             except sqlite3.IntegrityError:
@@ -162,12 +181,12 @@ class LedgerStore:
             try:
                 self.conn.execute(
                     """INSERT INTO ledger
-                       (id, timestamp, type, asset, amount, currency, price, venue, note, row_fp, imported_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (id, timestamp, type, asset, amount, currency, price, venue, note, account, row_fp, imported_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (row_b.id or "", row_b.timestamp.isoformat(), row_b.type,
                      row_b.asset.upper(), str(row_b.amount), row_b.currency.upper(),
                      str(row_b.price) if row_b.price is not None else None,
-                     row_b.venue.lower(), row_b.note, fp_b, now),
+                     row_b.venue.lower(), row_b.note, account_b, fp_b, now),
                 )
                 results[1] = True
             except sqlite3.IntegrityError:

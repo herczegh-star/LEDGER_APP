@@ -30,7 +30,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,51 @@ class PositionDTO:
     value: Optional[Decimal] = None        # quantity * spot_price
     unrealized_pnl: Optional[Decimal] = None
     roi_total: Optional[Decimal] = None    # unrealized_pnl / cost_basis (fraction)
+
+
+# ── Presale assets (Dashboard-only presentation split) ──────────────────────
+#
+# TICS and SOLX remain fully tracked, real positions everywhere (ledger,
+# compute_positions(), get_positions_full(), venue holdings, Health) — this
+# section ONLY affects how the Dashboard headline KPIs / cash-reserve-style
+# cards group already-computed PositionDTO values. Nothing here touches
+# compute_positions(), core/reports/holdings.py, or core/services/health_service.py.
+
+PRESALE_ASSETS: FrozenSet[str] = frozenset({"TICS", "SOLX"})
+
+
+@dataclass
+class PresaleSummaryDTO:
+    """Aggregate market value / cost basis / PnL for PRESALE_ASSETS only."""
+
+    value: Decimal        # sum of .value for matched positions (missing price -> 0, never crashes)
+    cost_basis: Decimal   # sum of .cost_basis for matched positions
+    pnl: Decimal          # value - cost_basis
+
+
+def compute_headline_positions(
+    positions: List[PositionDTO],
+    excluded_assets: FrozenSet[str] = PRESALE_ASSETS,
+) -> List[PositionDTO]:
+    """Positions for headline Portfolio Value / Unrealized PnL / ROI —
+    excludes excluded_assets (PRESALE_ASSETS by default). Pure filter over
+    an already-computed list; does not call or alter compute_positions() /
+    get_dashboard_snapshot()."""
+    return [p for p in positions if p.asset not in excluded_assets]
+
+
+def compute_presale_summary(
+    positions: List[PositionDTO],
+    presale_assets: FrozenSet[str] = PRESALE_ASSETS,
+) -> PresaleSummaryDTO:
+    """Aggregate value/cost_basis/pnl for presale_assets only. A missing
+    price on one matched asset contributes 0 to value (never raises) —
+    mirrors the existing `if p.value is not None` convention used
+    throughout this module."""
+    matched = [p for p in positions if p.asset in presale_assets]
+    value = sum((p.value for p in matched if p.value is not None), Decimal("0"))
+    cost_basis = sum((p.cost_basis for p in matched), Decimal("0"))
+    return PresaleSummaryDTO(value=value, cost_basis=cost_basis, pnl=value - cost_basis)
 
 
 @dataclass
@@ -150,6 +195,8 @@ class AddTradeRequestDTO:
     to_venue: Optional[str] = None          # destination venue — required for TRANSFER
     to_asset: Optional[str] = None          # SWAP only: asset being received
     received_amount: Optional[Decimal] = None  # SWAP only: amount of to_asset received
+    account: Optional[str] = None           # cash account (fiat legs only): source for BUY, destination for SELL, source for TRANSFER
+    to_account: Optional[str] = None        # TRANSFER only: destination cash account
 
 
 @dataclass
@@ -602,6 +649,8 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             else:
                 note = rate_note
 
+        account_norm = (request.account or "").strip() or None
+
         inp = AddTradeInput(
             type=request.type,
             timestamp=request.timestamp,
@@ -613,6 +662,7 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
             fee_amount=fee_amount,
             fee_currency=fee_currency,
             note=note,
+            account=account_norm,
         )
 
         try:
@@ -652,17 +702,33 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
         )
 
     # ── TRANSFER-specific validation ──────────────────────────────────────────
+    # account propagation (cash-accounts layer, Phase 2):
+    #   source      = (venue, account)       -- outflow leg
+    #   destination = (to_venue, to_account) -- inflow leg
+    # A transfer is only rejected when source == destination exactly (a true
+    # no-op write to itself). Same venue with a DIFFERENT account is a
+    # legitimate transfer (e.g. Revolut / Osobní CZK -> Revolut / Investment
+    # CZK) and must be allowed -- this replaces the old blanket
+    # `to_venue == venue` rejection.
+    account_norm = (request.account or "").strip() or None
+    to_account_norm: Optional[str] = None
     if request.type == "TRANSFER":
         to_venue_raw = (request.to_venue or "").strip().lower()
+        to_account_norm = (request.to_account or "").strip() or None
         if not to_venue_raw:
             return AddTradeResultDTO(
                 success=False, n_rows_added=0,
                 error_message="to_venue is required for TRANSFER",
             )
-        if to_venue_raw == venue:
+        source = (venue, account_norm)
+        destination = (to_venue_raw, to_account_norm)
+        if source == destination:
             return AddTradeResultDTO(
                 success=False, n_rows_added=0,
-                error_message=f"to_venue must differ from venue (both are {venue!r})",
+                error_message=(
+                    f"source and destination are identical (venue={venue!r}, "
+                    f"account={account_norm!r}) -- nothing would move"
+                ),
             )
     else:
         to_venue_raw = ""
@@ -685,6 +751,7 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
                 price=price,
                 venue=venue,
                 note=request.note,
+                account=account_norm,
             )
             row_in = RawRow(
                 id=canonical_id,
@@ -696,16 +763,20 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
                 price=price,
                 venue=to_venue_raw,
                 note=request.note,
+                account=to_account_norm,
             )
             rows_to_insert = [row_out, row_in]
 
-            # Optional FEE row — always on source venue (from_venue)
+            # Optional FEE row — always on source venue (from_venue). Inherits
+            # the source account only when denominated in the transferred
+            # asset itself (same rule as trade_service.build_trade_rows()).
             if request.fee_amount is not None:
                 fee_asset = (
                     request.fee_currency.upper().strip()
                     if request.fee_currency
                     else asset
                 )
+                fee_account = account_norm if fee_asset == asset else None
                 rows_to_insert.append(RawRow(
                     id=canonical_id,
                     timestamp=request.timestamp,
@@ -716,6 +787,7 @@ def add_trade(request: AddTradeRequestDTO, db_path: str) -> AddTradeResultDTO:
                     price=Decimal("1"),
                     venue=venue,
                     note=request.note,
+                    account=fee_account,
                 ))
         else:
             # FEE and other single-row types
@@ -859,6 +931,24 @@ def create_db(db_path: str) -> SimpleResultDTO:
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         store = LedgerStore(db_path)
         store.close()
+
+        # Every side-table schema (cash_reconciliation_snapshots,
+        # cash_account_roles, historical_account_assignments) is a SEPARATE
+        # table with its own explicit, idempotent init step — none is ever
+        # created implicitly by opening its store or by a read (see each
+        # store's module docstring). create_db() is this app's ONE
+        # conscious setup path, so it initializes all of them here.
+        from core.account_role_store import AccountRoleStore
+        from core.historical_account_assignment_store import AccountAssignmentStore
+        from core.reconciliation_store import ReconciliationStore
+
+        for store_cls in (ReconciliationStore, AccountRoleStore, AccountAssignmentStore):
+            side_store = store_cls(db_path)
+            try:
+                side_store.ensure_schema()
+            finally:
+                side_store.close()
+
         logger.info("Database created/verified: %s", db_path)
         return SimpleResultDTO(success=True)
     except Exception as exc:
@@ -1061,6 +1151,387 @@ def get_asset_detail(
         venue_positions=venue_positions,
         rows=asset_rows,
     )
+
+
+# ── Cash accounts (Phase 2) ─────────────────────────────────────────────────
+#
+# Pure read-only projections over core/reports/cash.py and
+# core/reports/proceeds.py. Never call compute_positions() /
+# compute_venue_holdings() differently, never write to the ledger, never
+# invent an account label — "Unassigned Cash" is applied by the UI layer
+# only, never stored.
+
+@dataclass
+class CashAccountRowDTO:
+    """One row of the Cash Accounts view."""
+
+    venue: str
+    account: Optional[str]   # None = legacy/unassigned — UI renders "Unassigned Cash"
+    currency: str
+    balance: Decimal
+
+
+def get_cash_accounts_view(db_path: str) -> List[CashAccountRowDTO]:
+    """Read-only TRACKED cash balances per (venue, account, currency).
+
+    TRACKED = account IS NOT NULL AND venue != 'external'. Historical fiat
+    flow with no known cash account (account IS NULL) is NOT a current
+    balance and is deliberately excluded here — see
+    get_legacy_unassigned_fiat_flows() for that data, kept available for
+    diagnostics only, never presented as a balance (see
+    core.reports.cash.compute_tracked_cash_reserve() for the full
+    rationale). Does not touch compute_positions() or
+    compute_venue_holdings().
+    """
+    from core.reports.cash import EXTERNAL_VENUE, compute_cash_balances
+
+    rows = get_ledger_rows(db_path)
+    balances = compute_cash_balances(rows)
+    result = [
+        CashAccountRowDTO(venue=venue, account=account, currency=currency, balance=amount)
+        for (venue, account, currency), amount in balances.items()
+        if venue != EXTERNAL_VENUE and account is not None
+    ]
+    result.sort(key=lambda r: (r.venue, r.account or "", r.currency))
+    return result
+
+
+def get_investment_cash_accounts_view(db_path: str) -> List[CashAccountRowDTO]:
+    """Read-only, ROLE-AWARE cash balances: only accounts whose role
+    resolves to INVESTMENT_CASH (core.account_role.INVESTMENT_CASH).
+
+    This is the correct source for Dashboard "Cash Reserve" / Portfolio
+    Cash Reserve display — get_cash_accounts_view() (any tracked account,
+    account IS NOT NULL) is role-UNAWARE and will happily include a
+    PERSONAL-role account (e.g. a mixed personal bank account that merely
+    happens to carry a few tagged correction cash legs) — that account must
+    never appear in a portfolio-scoped Cash Reserve, only in the general
+    Cash Accounts / reconciliation screens (which still use
+    get_cash_accounts_view() unchanged — a PERSONAL account's detail/history
+    is never hidden from the app, only excluded from THIS role-scoped view).
+
+    No role declared for an account (roles table missing/empty, or that
+    specific key never classified) -> excluded, same fail-closed default as
+    core.account_role.resolve_role(). account IS NULL -> already excluded
+    (LEGACY_UNASSIGNED is implicit and never has a role row).
+    """
+    from core.account_role import INVESTMENT_CASH, resolve_role
+    from core.account_role_store import AccountRoleSchemaNotInitializedError, AccountRoleStore
+    from core.reports.cash import EXTERNAL_VENUE, compute_cash_balances
+
+    rows = get_ledger_rows(db_path)
+    balances = compute_cash_balances(rows)
+
+    role_store = AccountRoleStore(db_path)
+    try:
+        roles = role_store.get_all_roles()
+    except AccountRoleSchemaNotInitializedError:
+        roles = []
+    finally:
+        role_store.close()
+
+    now = datetime.now()
+    result = [
+        CashAccountRowDTO(venue=venue, account=account, currency=currency, balance=amount)
+        for (venue, account, currency), amount in balances.items()
+        if venue != EXTERNAL_VENUE and account is not None
+        and resolve_role(venue, account, currency, roles, now) == INVESTMENT_CASH
+    ]
+    result.sort(key=lambda r: (r.venue, r.account or "", r.currency))
+    return result
+
+
+def get_legacy_unassigned_fiat_flows(db_path: str) -> List[CashAccountRowDTO]:
+    """Historical fiat flow recorded without a known cash account
+    (account IS NULL), excluding 'external'.
+
+    NOT a current cash balance — diagnostic/historical view only. Never
+    included in get_cash_accounts_view() or get_portfolio_cash_reserve().
+    Account is never auto-assigned; stays None, always.
+    """
+    from core.reports.cash import compute_legacy_unassigned_flows
+
+    rows = get_ledger_rows(db_path)
+    balances = compute_legacy_unassigned_flows(rows)
+    result = [
+        CashAccountRowDTO(venue=venue, account=account, currency=currency, balance=amount)
+        for (venue, account, currency), amount in balances.items()
+    ]
+    result.sort(key=lambda r: (r.venue, r.currency))
+    return result
+
+
+def get_cash_account_movements(
+    db_path: str,
+    venue: str,
+    account: Optional[str],
+    currency: str,
+) -> List[RawRow]:
+    """All ledger rows contributing to one (venue, account, currency) cash
+    balance, in ledger order (timeline order).
+
+    `account=None` selects the legacy/unassigned bucket for that venue —
+    never a guessed account name. TRANSFER rows to/from 'external' are
+    included here (they are real movements of this account) even though
+    'external' itself never appears as a selectable row in
+    get_cash_accounts_view().
+    """
+    venue_norm = venue.lower()
+    account_norm = (account or "").strip() or None
+    currency_uc = currency.upper()
+
+    rows = get_ledger_rows(db_path)
+    return [
+        r for r in rows
+        if r.venue.lower() == venue_norm
+        and r.account == account_norm
+        and r.asset.upper() == currency_uc
+    ]
+
+
+def get_known_account_labels(db_path: str) -> List[str]:
+    """Distinct existing cash-account labels (any venue), for UI picker
+    suggestions. Never includes 'external' or the legacy/unassigned bucket
+    (there is nothing to suggest for the latter)."""
+    from core.reports.cash import list_known_accounts
+
+    rows = get_ledger_rows(db_path)
+    triples = list_known_accounts(rows)
+    return sorted({account for (_venue, account, _currency) in triples})
+
+
+def get_portfolio_cash_reserve(db_path: str) -> Dict[str, Decimal]:
+    """Total cash reserve per currency, from TRACKED accounts only
+    (account IS NOT NULL, excludes 'external' — see
+    core.reports.cash.compute_tracked_cash_reserve()).
+
+    This is a SEPARATE figure from the dashboard's existing Total Value —
+    callers must not add it into total_value/unrealized_pnl/roi_total
+    without an explicit, clearly-labelled "Total Managed Value" figure
+    (see app_flet.py; gated, not yet wired into the primary KPIs).
+    """
+    from core.reports.cash import compute_portfolio_cash_reserve
+
+    rows = get_ledger_rows(db_path)
+    return compute_portfolio_cash_reserve(rows)
+
+
+def get_investment_cash_reserve(db_path: str) -> Dict[str, Decimal]:
+    """Total cash reserve per currency, ROLE-AWARE: only accounts whose
+    role resolves to INVESTMENT_CASH (see core.reports.cash.
+    compute_investment_cash_reserve() and get_investment_cash_accounts_view()
+    above for the same account-level filtering).
+
+    This — NOT get_portfolio_cash_reserve() (coarse, role-unaware) — is the
+    correct cash figure for any future Total Managed Value calculation
+    (Crypto Value + this). Kept as a separate function rather than changing
+    get_portfolio_cash_reserve()'s existing behaviour.
+    """
+    from core.account_role_store import AccountRoleSchemaNotInitializedError, AccountRoleStore
+    from core.reports.cash import compute_investment_cash_reserve
+
+    rows = get_ledger_rows(db_path)
+    role_store = AccountRoleStore(db_path)
+    try:
+        roles = role_store.get_all_roles()
+    except AccountRoleSchemaNotInitializedError:
+        roles = []
+    finally:
+        role_store.close()
+
+    return compute_investment_cash_reserve(rows, roles)
+
+
+def get_asset_proceeds(db_path: str, asset: str) -> list:
+    """Neutral (gross/net-agnostic) per-SELL fiat breakdown for *asset*.
+
+    See core.reports.proceeds — field names are "quote_amount" / "fee" /
+    "cash_impact", deliberately not "gross"/"net", because the ledger data
+    alone cannot confirm which semantics a given source venue used.
+    """
+    from core.reports.proceeds import get_asset_proceeds as _gap
+
+    rows = get_ledger_rows(db_path)
+    return _gap(rows, asset)
+
+
+# ── Corrections (read-only; prepared for a future Asset Detail UI section,
+# not yet wired into any view — see Phase 3C) ───────────────────────────────
+
+@dataclass
+class CorrectionSummaryDTO:
+    """One CORRECTION group affecting a given asset's realized PnL."""
+
+    correction_id: str
+    correction_of: str
+    asset: str
+    currency: str
+    delta: Decimal
+    reason: Optional[str]
+    original_value: Optional[Decimal]
+    corrected_value: Optional[Decimal]
+    timestamp: "datetime"
+    venue: str
+    account: Optional[str]
+
+
+def get_asset_corrections(db_path: str, asset: str) -> List[CorrectionSummaryDTO]:
+    """Read-only: all CORRECTION groups affecting *asset*'s realized PnL,
+    oldest first. The historical SELL row this corrects keeps showing its
+    original (uncorrected) numbers in get_asset_proceeds() — this is the
+    separate, explicit record of the adjustment on top of it.
+    """
+    from core.correction import parse_correction_note
+
+    asset_uc = asset.upper()
+    rows = get_ledger_rows(db_path)
+
+    markers = [
+        r for r in rows
+        if r.type == "CORRECTION" and r.asset.upper() == asset_uc and r.amount == Decimal("0")
+    ]
+    fiat_legs_by_id = {
+        r.id: r for r in rows
+        if r.type == "CORRECTION" and r.asset.upper() != asset_uc
+    }
+
+    result: List[CorrectionSummaryDTO] = []
+    for marker in markers:
+        fiat_leg = fiat_legs_by_id.get(marker.id)
+        parsed = parse_correction_note(marker.note) or {}
+        result.append(CorrectionSummaryDTO(
+            correction_id=marker.id or "",
+            correction_of=str(parsed.get("correction_of") or ""),
+            asset=asset_uc,
+            currency=marker.currency,
+            delta=fiat_leg.amount if fiat_leg is not None else Decimal("0"),
+            reason=parsed.get("reason"),
+            original_value=parsed.get("original"),
+            corrected_value=parsed.get("corrected"),
+            timestamp=marker.timestamp,
+            venue=marker.venue,
+            account=marker.account,
+        ))
+
+    result.sort(key=lambda c: c.timestamp)
+    return result
+
+
+# ── Cash reconciliation (read-only history + readiness; write goes through a
+# dedicated action, never the generic Add Trade dialog — see Phase Cash
+# Reconciliation) ────────────────────────────────────────────────────────────
+
+def add_reconciliation_snapshot(
+    db_path: str,
+    venue: str,
+    account: str,
+    currency: str,
+    reported_balance: Decimal,
+    as_of: "datetime",
+    note: Optional[str] = None,
+) -> SimpleResultDTO:
+    """UI-facing wrapper: never raises — validation/service errors are
+    captured in SimpleResultDTO.error_message, matching every other write
+    path in this facade (e.g. create_db)."""
+    from core.services.reconciliation_service import (
+        add_reconciliation_snapshot as _add_snapshot,
+    )
+
+    try:
+        _add_snapshot(
+            db_path=db_path, venue=venue, account=account, currency=currency,
+            reported_balance=reported_balance, as_of=as_of, note=note,
+        )
+        return SimpleResultDTO(success=True)
+    except (ValueError, RuntimeError) as exc:
+        # RuntimeError covers ReconciliationSchemaNotInitializedError — the
+        # schema is never created implicitly during a write (see
+        # core/reconciliation_store.py); this surfaces that as a normal
+        # captured error, same as any other validation failure.
+        return SimpleResultDTO(success=False, error_message=str(exc))
+
+
+def get_reconciliation_history(db_path: str, venue: str, account: str, currency: str) -> list:
+    """Read-only: list[ReconciliationHistoryRow], oldest as_of first."""
+    from core.services.reconciliation_service import (
+        get_reconciliation_history as _get_history,
+    )
+
+    return _get_history(db_path, venue, account, currency)
+
+
+def get_cash_reconciliation_readiness(db_path: str):
+    """Read-only: ReadinessResult — never flips Total Managed Value itself."""
+    from core.services.reconciliation_service import cash_reconciliation_readiness
+
+    return cash_reconciliation_readiness(db_path)
+
+
+# ── BUY cost corrections (read-only; prepared for a future Asset Detail UI
+# section, not yet wired into any view — see Phase BUY-FIX) ─────────────────
+
+@dataclass
+class BuyCostCorrectionSummaryDTO:
+    """One BUY_COST_CORRECTION group affecting a given asset's cost basis."""
+
+    correction_id: str
+    correction_of: str
+    asset: str
+    currency: str
+    cash_delta: Decimal
+    cost_basis_delta: Decimal
+    reason: Optional[str]
+    original_value: Optional[Decimal]
+    corrected_value: Optional[Decimal]
+    timestamp: "datetime"
+    imported_at: Optional["datetime"]
+    venue: str
+    account: Optional[str]
+
+
+def get_asset_buy_cost_corrections(db_path: str, asset: str) -> List[BuyCostCorrectionSummaryDTO]:
+    """Read-only: all BUY_COST_CORRECTION groups affecting *asset*'s cost
+    basis, oldest first. The historical BUY row this corrects keeps showing
+    its original (uncorrected) numbers — this is the separate, explicit
+    record of the adjustment on top of it.
+    """
+    from core.buy_cost_correction import parse_buy_cost_correction_note
+
+    asset_uc = asset.upper()
+    rows = get_ledger_rows(db_path)
+
+    markers = [
+        r for r in rows
+        if r.type == "BUY_COST_CORRECTION" and r.asset.upper() == asset_uc and r.amount == Decimal("0")
+    ]
+    cash_legs_by_id = {
+        r.id: r for r in rows
+        if r.type == "BUY_COST_CORRECTION" and r.asset.upper() != asset_uc
+    }
+
+    result: List[BuyCostCorrectionSummaryDTO] = []
+    for marker in markers:
+        cash_leg = cash_legs_by_id.get(marker.id)
+        parsed = parse_buy_cost_correction_note(marker.note) or {}
+        cash_delta = cash_leg.amount if cash_leg is not None else Decimal("0")
+        result.append(BuyCostCorrectionSummaryDTO(
+            correction_id=marker.id or "",
+            correction_of=str(parsed.get("correction_of") or ""),
+            asset=asset_uc,
+            currency=marker.currency,
+            cash_delta=cash_delta,
+            cost_basis_delta=parsed.get("cost_basis_delta", -cash_delta),
+            reason=parsed.get("reason"),
+            original_value=parsed.get("original"),
+            corrected_value=parsed.get("corrected"),
+            timestamp=marker.timestamp,
+            imported_at=marker.imported_at,
+            venue=marker.venue,
+            account=cash_leg.account if cash_leg is not None else None,
+        ))
+
+    result.sort(key=lambda c: c.timestamp)
+    return result
 
 
 # ── Time-series reports ────────────────────────────────────────────────────────

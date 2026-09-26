@@ -69,6 +69,7 @@ class AddTradeInput:
     fee_amount: Optional[Decimal] = field(default=None)    # positive if present
     fee_currency: Optional[str] = field(default=None)      # defaults to quote_currency
     note: Optional[str] = field(default=None)
+    account: Optional[str] = field(default=None)           # destination cash account (fiat legs only)
 
 
 def _validate(inp: AddTradeInput, fiat: FrozenSet[str]) -> None:
@@ -104,6 +105,17 @@ def build_trade_rows(
     Signs:
         BUY:  base +amount, quote -amount, fee -amount
         SELL: base -amount, quote +amount, fee -amount
+
+    account propagation (cash-accounts layer):
+        row_base (crypto leg):  account is always None — it belongs to a
+                                 venue/wallet holding, not a cash account.
+        row_quote (fiat leg):   account = inp.account, for BUY and SELL alike
+                                 (BUY debits the cash account, SELL credits it).
+        row_fee:                account = inp.account ONLY when the fee is
+                                 denominated in the same currency as the quote
+                                 leg (i.e. it is actually deducted from the same
+                                 cash account). A fee in a different asset
+                                 (e.g. on-chain network fee) gets account=None.
     """
     _validate(inp, fiat)
 
@@ -142,12 +154,14 @@ def build_trade_rows(
         price=Decimal("1"),
         venue=inp.venue.lower(),
         note=inp.note,
+        account=inp.account,
     )
 
     rows: List[RawRow] = [row_base, row_quote]
 
     if inp.fee_amount is not None:
         fee_asset = (inp.fee_currency or inp.quote_currency).upper()
+        fee_account = inp.account if fee_asset == quote else None
         row_fee = RawRow(
             id=trade_id,
             timestamp=inp.timestamp,
@@ -158,6 +172,7 @@ def build_trade_rows(
             price=Decimal("1"),
             venue=inp.venue.lower(),
             note=inp.note,
+            account=fee_account,
         )
         rows.append(row_fee)
 
