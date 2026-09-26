@@ -200,8 +200,6 @@ def _main_view_impl(page: ft.Page) -> None:
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
     snap_holder: list = [None]   # last DashboardSnapshotDTO
     privacy = [False]  # privacy mode — hides sensitive KPI values
-    presale_hidden = [True]  # PRESALE card reveal state — always True on a fresh app start,
-                              # never persisted (no settings/DB write) — see update_presale_card()
     _refresh_guard = RefreshGuard()  # guards refresh() background reloads — see ui/refresh_guard.py
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
@@ -317,35 +315,28 @@ def _main_view_impl(page: ft.Page) -> None:
             w_managed_val.color = T_PRI
 
     # ── PRESALE card update ──────────────────────────────────────────────────────
-    def _toggle_presale(e=None) -> None:
-        presale_hidden[0] = not presale_hidden[0]
-        update_presale_card()
-        page.update()
-
     def update_presale_card() -> None:
         """TICS + SOLX market value only — excluded from the headline KPIs
         above (see update_kpis()'s compute_headline_positions() call).
 
-        Hidden by default on every app start (presale_hidden[0] starts True
-        — a plain local variable, never read from or written to settings/DB,
-        so a restart always begins hidden again). Click toggles reveal/hide,
-        no persistence either way.
+        Always shown directly on load — no hidden/reveal state, no click
+        toggle, no persistence. Displays ONLY the aggregate market value
+        (never PnL, cost basis, drawdown, or a percentage) — a neutral
+        "what are these worth right now" figure, deliberately not drawing
+        attention to their historical PnL.
 
-        Colour: hidden -> muted '********'. Revealed -> white, UNLESS the
-        aggregate PRESALE PnL (value - cost_basis) is strictly positive, in
-        which case it may render green. PnL <= 0 stays white — NEVER red,
-        and the market value itself is never shown with a minus sign (it
-        is a value, not a signed PnL figure)."""
+        Colour: white by default. May render green ONLY when the aggregate
+        PRESALE PnL (value - cost_basis, computed internally for colour
+        only, never displayed) is strictly positive. PnL <= 0 stays white
+        — NEVER red, and the market value itself is never shown with a
+        minus sign (it is a value, not a signed PnL figure)."""
         if privacy[0]:
             presale_col.controls = [ft.Text(_HIDDEN, size=13, color=T_MUT)]
             return
 
         summary = compute_presale_summary(raw)
-        if presale_hidden[0]:
-            text, color = _HIDDEN, T_MUT
-        else:
-            text = _czk(summary.value)
-            color = GREEN if summary.pnl > 0 else T_PRI
+        text = _czk(summary.value)
+        color = GREEN if summary.pnl > 0 else T_PRI
 
         presale_col.controls = [
             ft.Row([ft.Container(
@@ -358,7 +349,6 @@ def _main_view_impl(page: ft.Page) -> None:
                 ),
                 bgcolor=BG_CARD, border=ft.border.all(1, "#223046"),
                 border_radius=10, padding=ft.padding.symmetric(10, 14),
-                on_click=_toggle_presale,
             )], spacing=10, wrap=True),
         ]
 
