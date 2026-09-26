@@ -25,6 +25,7 @@ def _blog(msg: str) -> None:
 _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 
 from core.services.ui_facade import (
+    compute_headline_positions, compute_presale_summary,
     create_app_context, create_db,
     get_dashboard_snapshot, get_investment_cash_accounts_view,
     get_investment_cash_reserve, set_db_path,
@@ -199,6 +200,8 @@ def _main_view_impl(page: ft.Page) -> None:
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
     snap_holder: list = [None]   # last DashboardSnapshotDTO
     privacy = [False]  # privacy mode — hides sensitive KPI values
+    presale_hidden = [True]  # PRESALE card reveal state — always True on a fresh app start,
+                              # never persisted (no settings/DB write) — see update_presale_card()
     _refresh_guard = RefreshGuard()  # guards refresh() background reloads — see ui/refresh_guard.py
 
     # ── KPI widgets ────────────────────────────────────────────────────────────
@@ -211,6 +214,9 @@ def _main_view_impl(page: ft.Page) -> None:
     # ── Cash Reserve block (Phase 2) — separate, read-only, NOT part of the
     # Total Value / ROI / PnL / Cost Basis KPIs above ──────────────────────────
     cash_reserve_col = ft.Column(spacing=6)
+
+    # ── PRESALE block — TICS/SOLX, excluded from headline KPIs below ───────────
+    presale_col = ft.Column(spacing=6)
 
     # Dynamic regions
     pills_row   = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO)
@@ -226,9 +232,13 @@ def _main_view_impl(page: ft.Page) -> None:
             w_roi.value = _HIDDEN; w_roi.color = T_MUT
             return
 
-        total_cost = sum((p.cost_basis for p in raw), Decimal("0"))
+        # Headline Portfolio Value / Unrealized PnL / ROI exclude PRESALE_ASSETS
+        # (TICS, SOLX) consistently — 'raw' itself stays untouched (asset cards /
+        # positions_to_show / TMV experimental calc below all still see TICS/SOLX).
+        headline = compute_headline_positions(raw)
+        total_cost = sum((p.cost_basis for p in headline), Decimal("0"))
 
-        vals = [p.value for p in raw if p.value is not None]
+        vals = [p.value for p in headline if p.value is not None]
         if vals:
             tv = sum(vals, Decimal("0"))
             pnl = tv - total_cost
@@ -305,6 +315,52 @@ def _main_view_impl(page: ft.Page) -> None:
             managed = crypto_total + reserve_czk
             w_managed_val.value = _czk(managed)
             w_managed_val.color = T_PRI
+
+    # ── PRESALE card update ──────────────────────────────────────────────────────
+    def _toggle_presale(e=None) -> None:
+        presale_hidden[0] = not presale_hidden[0]
+        update_presale_card()
+        page.update()
+
+    def update_presale_card() -> None:
+        """TICS + SOLX market value only — excluded from the headline KPIs
+        above (see update_kpis()'s compute_headline_positions() call).
+
+        Hidden by default on every app start (presale_hidden[0] starts True
+        — a plain local variable, never read from or written to settings/DB,
+        so a restart always begins hidden again). Click toggles reveal/hide,
+        no persistence either way.
+
+        Colour: hidden -> muted '********'. Revealed -> white, UNLESS the
+        aggregate PRESALE PnL (value - cost_basis) is strictly positive, in
+        which case it may render green. PnL <= 0 stays white — NEVER red,
+        and the market value itself is never shown with a minus sign (it
+        is a value, not a signed PnL figure)."""
+        if privacy[0]:
+            presale_col.controls = [ft.Text(_HIDDEN, size=13, color=T_MUT)]
+            return
+
+        summary = compute_presale_summary(raw)
+        if presale_hidden[0]:
+            text, color = _HIDDEN, T_MUT
+        else:
+            text = _czk(summary.value)
+            color = GREEN if summary.pnl > 0 else T_PRI
+
+        presale_col.controls = [
+            ft.Row([ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("PRESALE - TICS/SOLAXY", size=11, color=T_MUT),
+                        ft.Text(text, size=14, weight=ft.FontWeight.W_600, color=color),
+                    ],
+                    spacing=2, tight=True,
+                ),
+                bgcolor=BG_CARD, border=ft.border.all(1, "#223046"),
+                border_radius=10, padding=ft.padding.symmetric(10, 14),
+                on_click=_toggle_presale,
+            )], spacing=10, wrap=True),
+        ]
 
     # ── Sort pills ─────────────────────────────────────────────────────────────
     def build_pills() -> None:
@@ -528,6 +584,7 @@ def _main_view_impl(page: ft.Page) -> None:
                         raw = _snap.positions
                         update_kpis()
                         update_cash_reserve()
+                        update_presale_card()
                         build_pills()
                         build_cards()
                         page.update()
@@ -576,9 +633,27 @@ def _main_view_impl(page: ft.Page) -> None:
                     spacing=16,
                 ),
                 ft.Container(height=16),
-                ft.Text("CASH RESERVE", size=12, weight=ft.FontWeight.W_600, color=T_MUT),
-                ft.Container(height=6),
-                cash_reserve_col,
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("CASH RESERVE", size=12, weight=ft.FontWeight.W_600, color=T_MUT),
+                                ft.Container(height=6),
+                                cash_reserve_col,
+                            ],
+                            spacing=0,
+                        ),
+                        ft.Column(
+                            [
+                                ft.Container(height=24),  # aligns PRESALE chip with the cash-reserve row
+                                presale_col,
+                            ],
+                            spacing=0,
+                        ),
+                    ],
+                    spacing=32,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
                 ft.Container(height=16),
                 pills_row,
                 ft.Container(height=12),
@@ -750,6 +825,7 @@ def _main_view_impl(page: ft.Page) -> None:
         _eye_btn.icon = ft.Icons.VISIBILITY_OFF if privacy[0] else ft.Icons.VISIBILITY
         update_kpis()
         update_cash_reserve()
+        update_presale_card()
         page.update()
 
     _eye_btn.on_click = on_toggle_privacy
@@ -875,6 +951,7 @@ def _main_view_impl(page: ft.Page) -> None:
                 raw = _snap.positions
                 update_kpis()
                 update_cash_reserve()
+                update_presale_card()
                 build_pills()
                 build_cards()
                 _content.content = _dashboard_view

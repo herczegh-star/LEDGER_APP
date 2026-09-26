@@ -30,7 +30,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,51 @@ class PositionDTO:
     value: Optional[Decimal] = None        # quantity * spot_price
     unrealized_pnl: Optional[Decimal] = None
     roi_total: Optional[Decimal] = None    # unrealized_pnl / cost_basis (fraction)
+
+
+# ── Presale assets (Dashboard-only presentation split) ──────────────────────
+#
+# TICS and SOLX remain fully tracked, real positions everywhere (ledger,
+# compute_positions(), get_positions_full(), venue holdings, Health) — this
+# section ONLY affects how the Dashboard headline KPIs / cash-reserve-style
+# cards group already-computed PositionDTO values. Nothing here touches
+# compute_positions(), core/reports/holdings.py, or core/services/health_service.py.
+
+PRESALE_ASSETS: FrozenSet[str] = frozenset({"TICS", "SOLX"})
+
+
+@dataclass
+class PresaleSummaryDTO:
+    """Aggregate market value / cost basis / PnL for PRESALE_ASSETS only."""
+
+    value: Decimal        # sum of .value for matched positions (missing price -> 0, never crashes)
+    cost_basis: Decimal   # sum of .cost_basis for matched positions
+    pnl: Decimal          # value - cost_basis
+
+
+def compute_headline_positions(
+    positions: List[PositionDTO],
+    excluded_assets: FrozenSet[str] = PRESALE_ASSETS,
+) -> List[PositionDTO]:
+    """Positions for headline Portfolio Value / Unrealized PnL / ROI —
+    excludes excluded_assets (PRESALE_ASSETS by default). Pure filter over
+    an already-computed list; does not call or alter compute_positions() /
+    get_dashboard_snapshot()."""
+    return [p for p in positions if p.asset not in excluded_assets]
+
+
+def compute_presale_summary(
+    positions: List[PositionDTO],
+    presale_assets: FrozenSet[str] = PRESALE_ASSETS,
+) -> PresaleSummaryDTO:
+    """Aggregate value/cost_basis/pnl for presale_assets only. A missing
+    price on one matched asset contributes 0 to value (never raises) —
+    mirrors the existing `if p.value is not None` convention used
+    throughout this module."""
+    matched = [p for p in positions if p.asset in presale_assets]
+    value = sum((p.value for p in matched if p.value is not None), Decimal("0"))
+    cost_basis = sum((p.cost_basis for p in matched), Decimal("0"))
+    return PresaleSummaryDTO(value=value, cost_basis=cost_basis, pnl=value - cost_basis)
 
 
 @dataclass
