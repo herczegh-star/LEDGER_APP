@@ -27,9 +27,10 @@ _blog("CHECKPOINT 1 - import reached (ui.app_flet module loaded)")
 from core.services.ui_facade import (
     compute_headline_positions, compute_presale_summary,
     create_app_context, create_db,
-    get_dashboard_snapshot, get_investment_cash_accounts_view,
+    get_all_asset_notes, get_dashboard_snapshot, get_investment_cash_accounts_view,
     get_investment_cash_reserve, set_db_path,
 )
+from ui.modules.asset_note_dialog import open_asset_note_dialog
 from ui.refresh_guard import RefreshGuard
 from core.services import icon_service
 
@@ -188,6 +189,21 @@ def _main_view_impl(page: ft.Page) -> None:
             page.add(ft.Text(ctx.error or "Failed to create database.", color=RED, size=14))
             page.update()
             return
+    else:
+        # ctx.db_state == "OK": DB already exists. Still run create_db() —
+        # it's fully idempotent (CREATE TABLE IF NOT EXISTS per side-table,
+        # same as LedgerStore's own ledger table init) and never touches
+        # `ledger`/RawRow data. This is what actually creates any side-table
+        # schema (e.g. asset_notes) added to the app after this particular
+        # DB file was first created — without this, an existing ledger.db
+        # would only ever get such a table via the DB_MISSING onboarding
+        # path above, i.e. never.
+        result = create_db(ctx.db_path)
+        if not result.success:
+            page.controls.clear()
+            page.add(ft.Text(result.error_message or "Failed to initialize database.", color=RED, size=14))
+            page.update()
+            return
 
     db_path = ctx.db_path
     _price_provider = ctx.price_provider
@@ -197,6 +213,7 @@ def _main_view_impl(page: ft.Page) -> None:
 
     # ── State ──────────────────────────────────────────────────────────────────
     raw: list = []
+    asset_notes: dict = {}  # {asset: note} — pure UI metadata, see core/asset_note_store.py
     state = {"sort_field": "roi", "sort_asc": False}  # default: ROI Total DESC
     snap_holder: list = [None]   # last DashboardSnapshotDTO
     privacy = [False]  # privacy mode — hides sensitive KPI values
@@ -384,6 +401,12 @@ def _main_view_impl(page: ft.Page) -> None:
         pills_row.controls = [make_pill(f, l) for f, l in _SORT_FIELDS]
 
     # ── Cards ──────────────────────────────────────────────────────────────────
+    def _on_note_saved() -> None:
+        nonlocal asset_notes
+        asset_notes = get_all_asset_notes(db_path)
+        build_cards()
+        page.update()
+
     def build_cards() -> None:
         def make_card(p) -> ft.Container:
             unr = p.unrealized_pnl
@@ -402,6 +425,15 @@ def _main_view_impl(page: ft.Page) -> None:
                     on_back=lambda: set_view(0),
                 )
                 page.update()
+
+            def on_edit_note(e, a=p.asset) -> None:
+                open_asset_note_dialog(
+                    page=page,
+                    db_path=db_path,
+                    asset=a,
+                    existing_note=asset_notes.get(a),
+                    on_success=_on_note_saved,
+                )
 
             def stat(label: str, value: str) -> ft.Column:
                 return ft.Column(
@@ -446,8 +478,21 @@ def _main_view_impl(page: ft.Page) -> None:
                                             else []
                                         ),
                                         ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
+                                        *(
+                                            [ft.Icon(ft.Icons.INFO_OUTLINE, size=15, color=T_MUT, tooltip=asset_notes[p.asset])]
+                                            if asset_notes.get(p.asset)
+                                            else []
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.EDIT_OUTLINED,
+                                            icon_color=T_MUT,
+                                            icon_size=14,
+                                            tooltip="Edit note",
+                                            on_click=on_edit_note,
+                                            style=ft.ButtonStyle(padding=0),
+                                        ),
                                     ],
-                                    spacing=8,
+                                    spacing=6,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     tight=True,
                                 ),
@@ -557,14 +602,16 @@ def _main_view_impl(page: ft.Page) -> None:
         def _worker() -> None:
             _t0 = _time.perf_counter()
             _snap = None
+            _notes: dict = {}
             try:
                 _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+                _notes = get_all_asset_notes(db_path)
                 _blog(f"TIMING  refresh: get_dashboard_snapshot() took {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
             except Exception as exc:
                 _blog(f"ERROR in refresh() background worker: {exc}")
 
             async def _apply_on_ui_thread() -> None:
-                nonlocal raw
+                nonlocal raw, asset_notes
                 try:
                     if not _refresh_guard.is_current(generation):
                         _blog(f"refresh() generation {generation} superseded - discarding stale result")
@@ -572,6 +619,7 @@ def _main_view_impl(page: ft.Page) -> None:
                     if _snap is not None:
                         snap_holder[0] = _snap
                         raw = _snap.positions
+                        asset_notes = _notes
                         update_kpis()
                         update_cash_reserve()
                         update_presale_card()
@@ -919,8 +967,10 @@ def _main_view_impl(page: ft.Page) -> None:
         _t0 = _time.perf_counter()
         _snap = None
         _err = None
+        _notes: dict = {}
         try:
             _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+            _notes = get_all_asset_notes(db_path)
             _blog(f"TIMING  get_dashboard_snapshot() {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
             # Auto-download icons for any new assets (silent, best-effort)
             icon_service.download_missing([p.asset for p in _snap.positions])
@@ -935,10 +985,11 @@ def _main_view_impl(page: ft.Page) -> None:
             _time.sleep(remaining)
 
         async def _finish_on_ui_thread() -> None:
-            nonlocal raw
+            nonlocal raw, asset_notes
             if _snap is not None:
                 snap_holder[0] = _snap
                 raw = _snap.positions
+                asset_notes = _notes
                 update_kpis()
                 update_cash_reserve()
                 update_presale_card()

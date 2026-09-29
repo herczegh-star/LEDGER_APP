@@ -939,10 +939,11 @@ def create_db(db_path: str) -> SimpleResultDTO:
         # store's module docstring). create_db() is this app's ONE
         # conscious setup path, so it initializes all of them here.
         from core.account_role_store import AccountRoleStore
+        from core.asset_note_store import AssetNoteStore
         from core.historical_account_assignment_store import AccountAssignmentStore
         from core.reconciliation_store import ReconciliationStore
 
-        for store_cls in (ReconciliationStore, AccountRoleStore, AccountAssignmentStore):
+        for store_cls in (ReconciliationStore, AccountRoleStore, AccountAssignmentStore, AssetNoteStore):
             side_store = store_cls(db_path)
             try:
                 side_store.ensure_schema()
@@ -1714,3 +1715,60 @@ def export_dashboard_pdf_to_path(
     """
     from core.services.pdf_export_service import export_dashboard_pdf
     return export_dashboard_pdf(snap, out_path)
+
+
+# ── Asset notes (pure UI metadata; NEVER touches `ledger` / RawRow / WAC /
+# realized PnL — see core/asset_note_store.py's module docstring) ──────────
+
+def get_asset_note(db_path: str, asset: str) -> Optional[str]:
+    """Read-only: the saved note text for *asset*, or None if none exists."""
+    from core.asset_note_store import AssetNoteSchemaNotInitializedError, AssetNoteStore
+
+    store = AssetNoteStore(db_path, read_only=True)
+    try:
+        note = store.get_note(asset.upper().strip())
+        return note.note if note is not None else None
+    except AssetNoteSchemaNotInitializedError:
+        return None
+    finally:
+        store.close()
+
+
+def get_all_asset_notes(db_path: str) -> Dict[str, str]:
+    """Read-only: {asset: note} for every asset that has a saved note.
+
+    One bulk call per Dashboard refresh — avoids an N+1 query per card.
+    """
+    from core.asset_note_store import AssetNoteSchemaNotInitializedError, AssetNoteStore
+
+    store = AssetNoteStore(db_path, read_only=True)
+    try:
+        return {n.asset: n.note for n in store.get_all_notes()}
+    except AssetNoteSchemaNotInitializedError:
+        return {}
+    finally:
+        store.close()
+
+
+def set_asset_note(db_path: str, asset: str, note: str) -> SimpleResultDTO:
+    """UI-facing wrapper: never raises — validation/service errors are
+    captured in SimpleResultDTO.error_message, matching every other write
+    path in this facade (e.g. add_reconciliation_snapshot)."""
+    from core.services.asset_note_service import set_asset_note as _set_note
+
+    try:
+        _set_note(db_path, asset, note)
+        return SimpleResultDTO(success=True)
+    except (ValueError, RuntimeError) as exc:
+        return SimpleResultDTO(success=False, error_message=str(exc))
+
+
+def delete_asset_note(db_path: str, asset: str) -> SimpleResultDTO:
+    """UI-facing wrapper: never raises — see set_asset_note() above."""
+    from core.services.asset_note_service import delete_asset_note as _delete_note
+
+    try:
+        _delete_note(db_path, asset)
+        return SimpleResultDTO(success=True)
+    except (ValueError, RuntimeError) as exc:
+        return SimpleResultDTO(success=False, error_message=str(exc))
