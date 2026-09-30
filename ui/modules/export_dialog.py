@@ -8,7 +8,7 @@ UI only. All export logic delegated to core/services/export_service.py.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Callable
 
 import flet as ft
@@ -17,6 +17,7 @@ from core.services.ui_facade import (
     export_cashflow_to_csv,
     export_dashboard_pdf_to_path,
     export_ledger_to_csv,
+    export_ledger_to_csv_range,
     export_netto_invested_to_csv,
     export_positions_to_csv,
 )
@@ -34,6 +35,7 @@ BLUE    = "#1d4ed8"
 # Export type options
 _EXPORT_TYPES = [
     ft.dropdown.Option("ledger",         "Ledger (all rows)"),
+    ft.dropdown.Option("ledger_tax",     "LEDGER_TAX"),
     ft.dropdown.Option("cashflow",       "Cashflow"),
     ft.dropdown.Option("netto",          "Netto Invested"),
     ft.dropdown.Option("positions",      "Positions (WAC)"),
@@ -49,11 +51,18 @@ _BUCKETS = [
 _EXPORTS_DIR = os.path.join(os.getcwd(), "exports")
 
 
-def _auto_filename(export_type: str, bucket: str | None) -> str:
-    """Generate a timestamped filename for the export."""
+def _auto_filename(export_type: str, bucket: str | None, date_range: tuple | None = None) -> str:
+    """Generate a timestamped filename for the export.
+
+    date_range: optional (date_from, date_to) — used by "ledger_tax" to
+    encode the exported period in the filename.
+    """
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     if export_type == "ledger":
         name = f"ledger_{ts}.csv"
+    elif export_type == "ledger_tax":
+        date_from, date_to = date_range
+        name = f"ledger_tax_{date_from.isoformat()}_{date_to.isoformat()}_{ts}.csv"
     elif export_type == "cashflow":
         name = f"cashflow_{bucket}_{ts}.csv"
     elif export_type == "netto":
@@ -115,6 +124,25 @@ def open_export_dialog(
         cb_czk,
     ], spacing=8, visible=False)
 
+    # Date range (shown only for LEDGER_TAX) — both calendar days included whole.
+    tf_date_from = ft.TextField(
+        label="Date from (YYYY-MM-DD)",
+        width=200,
+        bgcolor=BG_CARD,
+        border_color=BORDER,
+        color=T_PRI,
+        label_style=ft.TextStyle(color=T_MUT),
+    )
+    tf_date_to = ft.TextField(
+        label="Date to (YYYY-MM-DD)",
+        width=200,
+        bgcolor=BG_CARD,
+        border_color=BORDER,
+        color=T_PRI,
+        label_style=ft.TextStyle(color=T_MUT),
+    )
+    date_range_row = ft.Row([tf_date_from, tf_date_to], spacing=12, visible=False)
+
     error_text = ft.Text("", color=RED, size=12)
 
     dlg: ft.AlertDialog
@@ -123,9 +151,10 @@ def open_export_dialog(
         needs_bucket = dd_type.value in ("cashflow", "netto")
         dd_bucket.visible = needs_bucket
         fiat_row.visible = needs_bucket
+        date_range_row.visible = dd_type.value == "ledger_tax"
         page.update()
 
-    dd_type.on_change = _on_type_change
+    dd_type.on_select = _on_type_change
 
     def _close(_e=None) -> None:
         page.pop_dialog()
@@ -145,11 +174,36 @@ def open_export_dialog(
         if not fiat and export_type in ("cashflow", "netto"):
             fiat = {"EUR", "CZK"}  # default fallback
 
-        out_path = _auto_filename(export_type, bucket)
+        date_from: date | None = None
+        date_to: date | None = None
+        if export_type == "ledger_tax":
+            from_str = (tf_date_from.value or "").strip()
+            to_str = (tf_date_to.value or "").strip()
+            if not from_str or not to_str:
+                error_text.value = "Date from and Date to are required."
+                page.update()
+                return
+            try:
+                date_from = date.fromisoformat(from_str)
+                date_to = date.fromisoformat(to_str)
+            except ValueError:
+                error_text.value = "Invalid date – use YYYY-MM-DD"
+                page.update()
+                return
+            if date_from > date_to:
+                error_text.value = "Date from must be on or before Date to."
+                page.update()
+                return
+
+        out_path = _auto_filename(export_type, bucket, date_range=(date_from, date_to))
 
         try:
             if export_type == "ledger":
                 saved = export_ledger_to_csv(db_path, out_path)
+            elif export_type == "ledger_tax":
+                time_from = datetime.combine(date_from, time.min)
+                time_to = datetime.combine(date_to, time.max)
+                saved = export_ledger_to_csv_range(db_path, out_path, time_from, time_to)
             elif export_type == "cashflow":
                 saved = export_cashflow_to_csv(db_path, out_path, bucket=bucket, fiat=fiat)
             elif export_type == "netto":
@@ -190,6 +244,7 @@ def open_export_dialog(
             ),
             ft.Row([dd_type, dd_bucket], spacing=12),
             fiat_row,
+            date_range_row,
             error_text,
         ],
         spacing=12,

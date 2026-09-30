@@ -13,12 +13,14 @@ from core.model import RawRow
 from core.ledger_store import LedgerStore
 from core.services.export_service import (
     export_ledger_csv,
+    export_ledger_csv_range,
     export_timeseries_report_csv,
     export_table_report_csv,
     export_cashflow_csv,
     export_netto_invested_csv,
     export_positions_csv,
 )
+from core.services.ui_facade import export_ledger_to_csv_range
 from core.services.report_service import get_report, get_positions_report, ReportKind
 
 
@@ -162,6 +164,185 @@ def test_export_ledger_csv_utf8_sig_bom():
         with open(out, "rb") as f:
             bom = f.read(3)
         assert bom == b"\xef\xbb\xbf"
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+# ── export_ledger_csv_range (LEDGER_TAX handoff) ────────────────────────────
+
+
+def _row_ids(out_path: str) -> List[str]:
+    with open(out_path, encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        return [r["id"] for r in reader]
+
+
+def test_export_ledger_csv_range_includes_row_inside_interval():
+    tid = "in-range"
+    rows = _make_trade_rows(trade_id=tid, ts=_TS)  # 2026-01-15
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        export_ledger_csv_range(
+            db_path, out,
+            time_from=datetime(2026, 1, 1), time_to=datetime(2026, 1, 31, 23, 59, 59),
+        )
+        assert set(_row_ids(out)) == {tid}
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_excludes_row_before_interval():
+    tid_jan = "jan"
+    tid_feb = "feb"
+    rows = _make_trade_rows(trade_id=tid_jan, ts=_TS) + _make_trade_rows(trade_id=tid_feb, ts=_TS2)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        # Interval covers only February — the January trade must not appear.
+        export_ledger_csv_range(
+            db_path, out,
+            time_from=datetime(2026, 2, 1), time_to=datetime(2026, 2, 28, 23, 59, 59),
+        )
+        ids = set(_row_ids(out))
+        assert tid_feb in ids
+        assert tid_jan not in ids
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_excludes_row_after_interval():
+    tid_jan = "jan"
+    tid_feb = "feb"
+    rows = _make_trade_rows(trade_id=tid_jan, ts=_TS) + _make_trade_rows(trade_id=tid_feb, ts=_TS2)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        # Interval covers only January — the February trade must not appear.
+        export_ledger_csv_range(
+            db_path, out,
+            time_from=datetime(2026, 1, 1), time_to=datetime(2026, 1, 31, 23, 59, 59),
+        )
+        ids = set(_row_ids(out))
+        assert tid_jan in ids
+        assert tid_feb not in ids
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_lower_bound_is_inclusive():
+    tid = "boundary-lower"
+    rows = _make_trade_rows(trade_id=tid, ts=_TS)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        # time_from == the row's own timestamp, exactly.
+        export_ledger_csv_range(db_path, out, time_from=_TS, time_to=_TS)
+        assert set(_row_ids(out)) == {tid}
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_upper_bound_is_inclusive():
+    tid = "boundary-upper"
+    rows = _make_trade_rows(trade_id=tid, ts=_TS)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        # time_to == the row's own timestamp, exactly (whole-day-inclusive semantics
+        # relied on by the UI layer's datetime.combine(date_to, time.max)).
+        export_ledger_csv_range(db_path, out, time_from=_TS, time_to=_TS)
+        assert set(_row_ids(out)) == {tid}
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_empty_result_is_header_only_valid_csv():
+    rows = _make_trade_rows(ts=_TS)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        export_ledger_csv_range(
+            db_path, out,
+            time_from=datetime(2030, 1, 1), time_to=datetime(2030, 1, 2),
+        )
+        with open(out, encoding="utf-8-sig") as f:
+            reader = csv.reader(f)
+            all_rows = list(reader)
+        assert all_rows == [
+            ["id", "timestamp", "type", "asset", "amount", "currency", "price", "venue", "note", "account"]
+        ]
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_csv_range_same_column_contract_as_full_export():
+    """LEDGER_TAX export must use the exact same 10-column contract as
+    Ledger (all rows) — no added/removed/reordered fields, no imported_at."""
+    rows = _make_trade_rows(ts=_TS)
+    db_path = _store_with_rows(rows)
+    out_full = _tmp_csv()
+    out_range = _tmp_csv()
+    try:
+        export_ledger_csv(db_path, out_full)
+        export_ledger_csv_range(db_path, out_range, time_from=_TS, time_to=_TS)
+        with open(out_full, encoding="utf-8-sig") as f:
+            header_full = next(csv.reader(f))
+        with open(out_range, encoding="utf-8-sig") as f:
+            header_range = next(csv.reader(f))
+        assert header_full == header_range
+        assert "imported_at" not in header_range
+    finally:
+        os.unlink(db_path)
+        for p in (out_full, out_range):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
+def test_export_ledger_csv_full_export_unaffected_by_range_export_addition():
+    """Regression: export_ledger_csv() (Ledger (all rows)) must keep returning
+    every row, unfiltered — the _write_ledger_rows_csv() refactor must not
+    have changed its behaviour."""
+    tid_jan = "jan"
+    tid_feb = "feb"
+    rows = _make_trade_rows(trade_id=tid_jan, ts=_TS) + _make_trade_rows(trade_id=tid_feb, ts=_TS2)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        export_ledger_csv(db_path, out)
+        ids = set(_row_ids(out))
+        assert ids == {tid_jan, tid_feb}
+    finally:
+        os.unlink(db_path)
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def test_export_ledger_to_csv_range_facade_delegates():
+    """ui_facade.export_ledger_to_csv_range() is a thin wrapper over
+    export_service.export_ledger_csv_range() — same result for the same args."""
+    tid = "facade-check"
+    rows = _make_trade_rows(trade_id=tid, ts=_TS)
+    db_path = _store_with_rows(rows)
+    out = _tmp_csv()
+    try:
+        saved = export_ledger_to_csv_range(db_path, out, time_from=_TS, time_to=_TS)
+        assert os.path.isfile(saved)
+        assert set(_row_ids(out)) == {tid}
     finally:
         os.unlink(db_path)
         if os.path.exists(out):

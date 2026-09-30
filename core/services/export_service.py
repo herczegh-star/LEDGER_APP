@@ -6,6 +6,7 @@ Column ordering is always deterministic.
 
 Public API:
     export_ledger_csv(db_path, out_path) -> str
+    export_ledger_csv_range(db_path, out_path, time_from, time_to) -> str
     export_timeseries_report_csv(report, out_path) -> str
     export_table_report_csv(report, out_path) -> str
     export_cashflow_csv(db_path, out_path, bucket, fiat) -> str
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import os
+from datetime import datetime
 from decimal import Decimal
 from typing import FrozenSet, Optional, Set
 
@@ -54,6 +56,25 @@ def _str(val) -> str:
 # ── Core export functions ────────────────────────────────────────────────────
 
 
+def _write_ledger_rows_csv(rows, out_path: str) -> str:
+    """Write *rows* to out_path using the canonical ledger CSV contract.
+
+    Columns (fixed order): id, timestamp, type, asset, amount,
+    currency, price, venue, note, account. Shared by export_ledger_csv()
+    and export_ledger_csv_range() — same column contract, same file
+    encoding, just a different row selection upstream.
+    """
+    _ensure_dir(out_path)
+    with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(_LEDGER_COLS)
+        for row in rows:
+            d = row.to_dict()
+            writer.writerow([_str(d.get(col)) for col in _LEDGER_COLS])
+
+    return os.path.abspath(out_path)
+
+
 def export_ledger_csv(db_path: str, out_path: str) -> str:
     """Export all ledger rows to a CSV file.
 
@@ -67,21 +88,44 @@ def export_ledger_csv(db_path: str, out_path: str) -> str:
     Returns:
         Absolute path to the written file.
     """
-    _ensure_dir(out_path)
     store = LedgerStore(db_path)
     try:
         rows = store.timeline()
     finally:
         store.close()
 
-    with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(_LEDGER_COLS)
-        for row in rows:
-            d = row.to_dict()
-            writer.writerow([_str(d.get(col)) for col in _LEDGER_COLS])
+    return _write_ledger_rows_csv(rows, out_path)
 
-    return os.path.abspath(out_path)
+
+def export_ledger_csv_range(db_path: str, out_path: str, time_from: datetime, time_to: datetime) -> str:
+    """Export ledger rows within [time_from, time_to] to a CSV file.
+
+    Same column contract as export_ledger_csv() — id, timestamp, type,
+    asset, amount, currency, price, venue, note, account. No filtering by
+    type, no tax logic: every row (BUY/SELL/TRANSFER/FEE/REVERSAL/
+    CORRECTION/...) whose timestamp falls in the closed interval is
+    included, exactly like export_ledger_csv() includes every row with no
+    date filter at all. Intended as the LEDGER_TAX handoff export — the
+    caller (UI) is responsible for resolving a calendar day range into
+    inclusive datetime bounds (e.g. 00:00:00 / 23:59:59.999999) before
+    calling this function.
+
+    Args:
+        db_path:   Path to the SQLite ledger database.
+        out_path:  Destination CSV file path.
+        time_from: Inclusive lower bound.
+        time_to:   Inclusive upper bound.
+
+    Returns:
+        Absolute path to the written file.
+    """
+    store = LedgerStore(db_path)
+    try:
+        rows = store.timeline_filtered(time_from=time_from, time_to=time_to)
+    finally:
+        store.close()
+
+    return _write_ledger_rows_csv(rows, out_path)
 
 
 def export_timeseries_report_csv(report: TimeSeriesReport, out_path: str) -> str:

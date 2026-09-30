@@ -15,6 +15,7 @@ Public API:
     get_time_series_report(db_path, kind, bucket, fiat) -> TimeSeriesReport
     export_table_report_to_csv(report, out_path) -> str
     export_ledger_to_csv(db_path, out_path) -> str
+    export_ledger_to_csv_range(db_path, out_path, time_from, time_to) -> str
     export_cashflow_to_csv(db_path, out_path, bucket, fiat) -> str
     export_netto_invested_to_csv(db_path, out_path, bucket, fiat) -> str
     export_positions_to_csv(db_path, out_path) -> str
@@ -1568,6 +1569,16 @@ def export_ledger_to_csv(db_path: str, out_path: str) -> str:
     """Export all ledger rows to CSV and return the saved path."""
     from core.services.export_service import export_ledger_csv as _elc
     return _elc(db_path, out_path)
+
+
+def export_ledger_to_csv_range(
+    db_path: str, out_path: str, time_from: datetime, time_to: datetime,
+) -> str:
+    """Export ledger rows within [time_from, time_to] to CSV (LEDGER_TAX
+    handoff) and return the saved path. Same column contract as
+    export_ledger_to_csv() — see core/services/export_service.py."""
+    from core.services.export_service import export_ledger_csv_range as _elcr
+    return _elcr(db_path, out_path, time_from, time_to)
 
 
 def export_cashflow_to_csv(
