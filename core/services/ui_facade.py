@@ -942,9 +942,14 @@ def create_db(db_path: str) -> SimpleResultDTO:
         from core.account_role_store import AccountRoleStore
         from core.asset_note_store import AssetNoteStore
         from core.historical_account_assignment_store import AccountAssignmentStore
+        from core.historical_price_store import HistoricalPriceStore
+        from core.portfolio_snapshot_store import PortfolioSnapshotStore
         from core.reconciliation_store import ReconciliationStore
 
-        for store_cls in (ReconciliationStore, AccountRoleStore, AccountAssignmentStore, AssetNoteStore):
+        for store_cls in (
+            ReconciliationStore, AccountRoleStore, AccountAssignmentStore, AssetNoteStore,
+            HistoricalPriceStore, PortfolioSnapshotStore,
+        ):
             side_store = store_cls(db_path)
             try:
                 side_store.ensure_schema()
@@ -1783,3 +1788,59 @@ def delete_asset_note(db_path: str, asset: str) -> SimpleResultDTO:
         return SimpleResultDTO(success=True)
     except (ValueError, RuntimeError) as exc:
         return SimpleResultDTO(success=False, error_message=str(exc))
+
+
+# ── Portfolio history (Etapa 1 — data/service layer only; no UI chart yet) ──
+# See core/services/historical_price_service.py and
+# core/services/portfolio_history_service.py's module docstrings for the
+# hybrid backfill+live-snapshot design these delegate to.
+
+def backfill_historical_prices(
+    db_path: str,
+    provider,
+    assets: Optional[List[str]] = None,
+    fiat: str = "CZK",
+    since=None,
+    as_of=None,
+):
+    """Thin delegate to core.services.historical_price_service.
+    backfill_historical_prices() — see its docstring for the full
+    contract. *provider* must be a CoinGeckoPriceProvider instance (or any
+    object with a matching get_historical_prices(asset, fiat, days)
+    method) — NOT the generic live price_provider the Dashboard uses.
+
+    This is an explicit, occasional, deliberately-triggered action (not
+    part of any automatic refresh path), so unlike most write-wrappers in
+    this facade it does NOT swallow a HistoricalPriceSchemaNotInitializedError
+    into a SimpleResultDTO — a missing schema here means create_db() was
+    never run, which the caller should see directly, not silently.
+    """
+    from core.services.historical_price_service import backfill_historical_prices as _backfill
+    return _backfill(db_path, provider, assets=assets, fiat=fiat, since=since, as_of=as_of)
+
+
+def maybe_save_portfolio_snapshot(db_path: str, snap, min_interval: "timedelta" = None, now=None):
+    """Thin delegate to core.services.portfolio_history_service.
+    maybe_save_portfolio_snapshot() — never raises (see its docstring).
+    Call this right after a successful get_dashboard_snapshot(), exactly
+    like ui/app_flet.py's refresh() does."""
+    from datetime import timedelta as _timedelta
+
+    from core.services.portfolio_history_service import (
+        _DEFAULT_MIN_SNAPSHOT_INTERVAL,
+        maybe_save_portfolio_snapshot as _maybe_save,
+    )
+    return _maybe_save(
+        db_path, snap,
+        min_interval=min_interval if min_interval is not None else _DEFAULT_MIN_SNAPSHOT_INTERVAL,
+        now=now,
+    )
+
+
+def get_portfolio_value_trend(db_path: str, date_from, date_to):
+    """Thin delegate to core.services.portfolio_history_service.
+    get_portfolio_value_trend() — see its docstring. Returns
+    List[PortfolioValueTrendPointDTO], one per calendar day, ready for a
+    future UI to render directly without recomputing anything itself."""
+    from core.services.portfolio_history_service import get_portfolio_value_trend as _trend
+    return _trend(db_path, date_from, date_to)

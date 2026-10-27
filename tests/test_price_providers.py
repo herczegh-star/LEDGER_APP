@@ -6,6 +6,7 @@ fully offline and deterministic.
 from __future__ import annotations
 
 import json
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -156,6 +157,256 @@ class TestCoinGeckoProvider:
             result = provider.get_prices(["BTC", "ETH"], "CZK")
         assert m.call_count == 1
         assert "BTC" in result and "ETH" in result
+
+    def test_usdc_usdt_are_mapped(self):
+        assert "USDC" in COINGECKO_IDS
+        assert "USDT" in COINGECKO_IDS
+
+    def test_no_api_key_means_no_extra_header_byte_for_byte_same_as_before(self):
+        """Default behaviour (no COINGECKO_API_KEY set, no api_key= passed)
+        must be identical to before get_historical_prices()/api_key existed."""
+        response_body = {"bitcoin": {"czk": 2500000}}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)) as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            provider.get_prices(["BTC"], "CZK")
+            headers_sent = m.call_args[0][0].headers
+        assert not any(k.lower() == "x-cg-demo-api-key" for k in headers_sent)
+
+    def test_explicit_api_key_adds_header(self):
+        response_body = {"bitcoin": {"czk": 2500000}}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)) as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60, api_key="demo-123")
+            provider.get_prices(["BTC"], "CZK")
+            headers_sent = m.call_args[0][0].headers
+        assert headers_sent.get("X-cg-demo-api-key") == "demo-123"
+
+    def test_api_key_from_environment_variable(self, monkeypatch):
+        monkeypatch.setenv("COINGECKO_API_KEY", "from-env-456")
+        response_body = {"bitcoin": {"czk": 2500000}}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)) as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)  # no explicit api_key
+            provider.get_prices(["BTC"], "CZK")
+            headers_sent = m.call_args[0][0].headers
+        assert headers_sent.get("X-cg-demo-api-key") == "from-env-456"
+
+    def test_explicit_api_key_overrides_environment(self, monkeypatch):
+        monkeypatch.setenv("COINGECKO_API_KEY", "from-env")
+        provider = CoinGeckoPriceProvider(ttl_seconds=60, api_key="explicit")
+        assert provider._api_key == "explicit"
+
+
+# ── CoinGeckoPriceProvider.get_historical_prices() ───────────────────────────
+
+class TestCoinGeckoHistoricalPrices:
+    def test_unknown_asset_returns_empty_without_http_call(self):
+        with patch("urllib.request.urlopen") as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("FAKETOKEN", "CZK", days=30)
+        m.assert_not_called()
+        assert result == {}
+
+    def test_url_contains_coin_id_and_days_and_daily_interval(self):
+        response_body = {"prices": [[1704067200000, 2500000]]}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)) as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            provider.get_historical_prices("BTC", "CZK", days=90)
+            url_called = m.call_args[0][0].full_url
+        assert "coins/bitcoin/market_chart" in url_called
+        assert "days=90" in url_called
+        assert "interval=daily" in url_called
+        assert "vs_currency=czk" in url_called
+
+    def test_parses_timestamp_ms_to_utc_date(self):
+        # 1704067200000 ms == 2024-01-01T00:00:00Z
+        response_body = {"prices": [[1704067200000, 2500000]]}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert result[date(2024, 1, 1)] == Decimal("2500000")
+
+    def test_multiple_points_same_day_last_one_wins(self):
+        response_body = {"prices": [
+            [1704067200000, 2500000],   # 2024-01-01T00:00:00Z
+            [1704110400000, 2600000],   # 2024-01-01T12:00:00Z, same UTC date
+        ]}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert result[date(2024, 1, 1)] == Decimal("2600000")
+
+    def test_network_error_returns_empty_not_raise(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("timeout")):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert result == {}
+
+    def test_malformed_response_returns_empty_not_raise(self):
+        response_body = {"unexpected": "shape"}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert result == {}
+
+    def test_one_malformed_point_does_not_void_other_valid_points(self):
+        response_body = {"prices": [
+            [1704067200000, 2500000],
+            ["not-a-timestamp", "not-a-price"],
+            [1704153600000, 2600000],   # 2024-01-02T00:00:00Z
+        ]}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert result[date(2024, 1, 1)] == Decimal("2500000")
+        assert result[date(2024, 1, 2)] == Decimal("2600000")
+
+    def test_zero_days_returns_empty_without_http_call(self):
+        with patch("urllib.request.urlopen") as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=0)
+        m.assert_not_called()
+        assert result == {}
+
+
+# ── New CoinGecko mappings (2026-10-28 verification pass) ───────────────────
+
+class TestNewCoinGeckoMappings:
+    """Each mapping below was the SOLE exact-symbol match on CoinGecko's own
+    /search at verification time — see core/prices/coingecko.py's module
+    docstring. PUMP and TON were deliberately left unmapped (genuine
+    ticker-collision risk) and must stay absent until a human confirms."""
+
+    @pytest.mark.parametrize("ticker,expected_id", [
+        ("ENA", "ethena"),
+        ("HYPE", "hyperliquid"),
+        ("INJ", "injective-protocol"),
+        ("MON", "monad"),
+        ("MORPHO", "morpho"),
+        ("NEAR", "near"),
+        ("RENDER", "render-token"),
+        ("XLM", "stellar"),
+    ])
+    def test_new_mapping_resolves_to_verified_id(self, ticker, expected_id):
+        assert COINGECKO_IDS[ticker] == expected_id
+
+    def test_pump_deliberately_unresolved(self):
+        """Two real coins share the PUMP ticker (pump-fun rank 50 vs.
+        big-pump rank 2802) — must not be auto-resolved without confirmation."""
+        assert "PUMP" not in COINGECKO_IDS
+
+    def test_ton_deliberately_unresolved(self):
+        """CoinGecko's current TON-symbol coin (Tokamak Network) is NOT
+        the Toncoin this ledger almost certainly means — the real
+        candidate (the-open-network) now trades under a different symbol
+        after an apparent rebrand. Must not be auto-resolved."""
+        assert "TON" not in COINGECKO_IDS
+
+
+# ── CoinGeckoPriceProvider.get_historical_prices_range() ────────────────────
+
+class TestCoinGeckoHistoricalPricesRange:
+    def test_unknown_asset_returns_empty_without_http_call(self):
+        with patch("urllib.request.urlopen") as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range(
+                "FAKETOKEN", "CZK", date(2026, 1, 1), date(2026, 1, 31),
+            )
+        m.assert_not_called()
+        assert result == {}
+
+    def test_date_from_after_date_to_returns_empty_without_http_call(self):
+        with patch("urllib.request.urlopen") as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range(
+                "BTC", "CZK", date(2026, 2, 1), date(2026, 1, 1),
+            )
+        m.assert_not_called()
+        assert result == {}
+
+    def test_url_contains_coin_id_and_range_endpoint_and_unix_bounds(self):
+        response_body = {"prices": [[1704067200000, 2500000]]}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)) as m:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 6, 1))
+            url_called = m.call_args[0][0].full_url
+        assert "coins/bitcoin/market_chart/range" in url_called
+        assert "vs_currency=czk" in url_called
+        assert "from=" in url_called
+        assert "to=" in url_called
+
+    def test_parses_timestamp_ms_to_utc_date(self):
+        response_body = {"prices": [[1704067200000, 2500000]]}  # 2024-01-01T00:00:00Z
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2024, 1, 1), date(2024, 1, 2))
+        assert result[date(2024, 1, 1)] == Decimal("2500000")
+
+    def test_network_error_returns_empty_not_raise(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("timeout")):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 1, 31))
+        assert result == {}
+
+    def test_malformed_response_returns_empty_not_raise(self):
+        response_body = {"unexpected": "shape"}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(response_body)):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 1, 31))
+        assert result == {}
+
+
+# ── Retry-on-429 (both historical methods share _fetch_json_with_retry) ─────
+
+def _http_error(code: int, body: bytes = b"{}"):
+    import urllib.error
+    return urllib.error.HTTPError(
+        url="http://x", code=code, msg="error", hdrs=None, fp=BytesIO(body),
+    )
+
+
+class TestCoinGeckoRetry:
+    def test_429_then_success_retries_and_returns_data(self):
+        response_body = {"prices": [[1704067200000, 2500000]]}
+        ok_response = _mock_urlopen(response_body)
+        with patch("urllib.request.urlopen", side_effect=[_http_error(429), ok_response]) as m, \
+             patch("core.prices.coingecko.time.sleep") as sleep_mock:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 1, 31))
+        assert m.call_count == 2
+        assert sleep_mock.call_count == 1  # backed off exactly once, then succeeded
+        assert result[date(2024, 1, 1)] == Decimal("2500000")
+
+    def test_429_exhausts_retries_then_returns_empty_not_raise(self):
+        with patch("urllib.request.urlopen", side_effect=[_http_error(429)] * 10) as m, \
+             patch("core.prices.coingecko.time.sleep"):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 1, 31))
+        assert result == {}
+        # Bounded: at most (1 initial + _MAX_RETRIES) attempts — never an infinite loop.
+        from core.prices.coingecko import _MAX_RETRIES
+        assert m.call_count == _MAX_RETRIES + 1
+
+    def test_401_does_not_retry(self):
+        """A 401 (e.g. 'exceeds the allowed time range') can never succeed
+        by retrying — must fail fast, no wasted attempts."""
+        with patch("urllib.request.urlopen", side_effect=_http_error(401)) as m, \
+             patch("core.prices.coingecko.time.sleep") as sleep_mock:
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices_range("BTC", "CZK", date(2026, 1, 1), date(2026, 1, 31))
+        assert result == {}
+        assert m.call_count == 1
+        sleep_mock.assert_not_called()
+
+    def test_get_historical_prices_also_retries_on_429(self):
+        """Same retry contract applies to the trailing-days method, not
+        just the range method — both share _fetch_json_with_retry()."""
+        response_body = {"prices": [[1704067200000, 2500000]]}
+        ok_response = _mock_urlopen(response_body)
+        with patch("urllib.request.urlopen", side_effect=[_http_error(429), ok_response]) as m, \
+             patch("core.prices.coingecko.time.sleep"):
+            provider = CoinGeckoPriceProvider(ttl_seconds=60)
+            result = provider.get_historical_prices("BTC", "CZK", days=30)
+        assert m.call_count == 2
+        assert result[date(2024, 1, 1)] == Decimal("2500000")
 
 
 # ── CoinbasePriceProvider ─────────────────────────────────────────────────────

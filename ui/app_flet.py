@@ -28,7 +28,7 @@ from core.services.ui_facade import (
     compute_headline_positions, compute_presale_summary,
     create_app_context, create_db,
     get_all_asset_notes, get_dashboard_snapshot, get_investment_cash_accounts_view,
-    get_investment_cash_reserve, set_db_path,
+    get_investment_cash_reserve, maybe_save_portfolio_snapshot, set_db_path,
 )
 from ui.modules.asset_note_dialog import open_asset_note_dialog
 from ui.refresh_guard import RefreshGuard
@@ -605,6 +605,11 @@ def _main_view_impl(page: ft.Page) -> None:
             _notes: dict = {}
             try:
                 _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+                # Best-effort, silent: at most one new portfolio_snapshots row
+                # every few hours (see portfolio_history_service's min_interval
+                # gate). Never raises — a failure here must never affect the
+                # Dashboard that's being rendered from _snap below.
+                maybe_save_portfolio_snapshot(db_path, _snap)
                 _notes = get_all_asset_notes(db_path)
                 _blog(f"TIMING  refresh: get_dashboard_snapshot() took {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
             except Exception as exc:
@@ -970,6 +975,9 @@ def _main_view_impl(page: ft.Page) -> None:
         _notes: dict = {}
         try:
             _snap = get_dashboard_snapshot(db_path, _price_provider, _price_fiat)
+            # Best-effort, silent — see the matching comment in refresh()'s
+            # _worker() above.
+            maybe_save_portfolio_snapshot(db_path, _snap)
             _notes = get_all_asset_notes(db_path)
             _blog(f"TIMING  get_dashboard_snapshot() {(_time.perf_counter()-_t0)*1000:.1f}ms  positions={len(_snap.positions)}")
             # Auto-download icons for any new assets (silent, best-effort)

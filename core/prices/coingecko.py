@@ -1,24 +1,73 @@
 """CoinGecko simple/price provider.
 
-Uses the free public endpoint — no API key required.
+Uses the free public endpoint — no API key required for live prices.
 Results are TTL-cached to avoid hammering the rate limit.
 
 Asset mapping:
     Maps uppercase portfolio symbols → CoinGecko coin IDs.
     Unknown symbols are silently skipped (no crash, no price returned).
+
+Optional Demo API key:
+    An API key is NOT required — if COINGECKO_API_KEY is unset (the
+    default), behaviour is byte-for-byte identical to before this was
+    added: same URL, same (lack of) headers. Setting the COINGECKO_API_KEY
+    environment variable (or passing api_key= explicitly) adds the
+    `x-cg-demo-api-key` header CoinGecko's free Demo plan expects, raising
+    the effective rate limit — see core/prices/coingecko.py's module for
+    get_historical_prices(), which benefits from this most (backfill).
+
+get_historical_prices() / get_historical_prices_range() (new):
+    Backfill-only capability, deliberately NOT part of the shared
+    PriceProvider interface (core/prices/interface.py) — CoinbasePriceProvider
+    and CompositePriceProvider have no equivalent, and adding an abstract
+    method there would force an unrelated change on both. Callers that need
+    historical backfill must hold a CoinGeckoPriceProvider instance
+    directly (see core/services/historical_price_service.py), not the
+    generic live price_provider used by the Dashboard.
+
+Mapping verification (2026-10-28, per-ticker CoinGecko /search lookup —
+see the Etapa 1 validation follow-up conversation for full reasoning):
+    ENA, HYPE, INJ, MORPHO, NEAR, RENDER, XLM were each the sole coin on
+    CoinGecko with that exact ticker symbol — unambiguous. MON resolved to
+    "monad" (id=monad) — also the sole exact-symbol match, despite fuzzy
+    text-search noise from "Monero". PUMP and TON were deliberately NOT
+    added — PUMP has two real coins sharing the ticker (pump-fun vs.
+    big-pump, ranks 50 vs. 2802) and TON's current CoinGecko ticker
+    belongs to an unrelated project (Tokamak Network); the likely actual
+    match (the-open-network, "Gram (prev. Toncoin)") now trades under a
+    different symbol after an apparent rebrand. Both need explicit human
+    confirmation before being added — see this project's validation
+    report rather than guessing here.
+
+Anonymous-tier history limit (found during validation, 2026-10):
+    CoinGecko's keyless public tier hard-caps historical lookback at 365
+    days before "today" — confirmed via /market_chart/range returning
+    HTTP 401 "exceeds the allowed time range" for any window reaching
+    further back, regardless of chunk size. get_historical_prices_range()
+    does not special-case this: a chunk older than the tier allows simply
+    fails like any other chunk (see backfill_historical_prices()'s
+    per-chunk failure tolerance) — a future paid/Demo key with a longer
+    window would transparently reach further back with the same code.
 """
 from __future__ import annotations
 
 import json
+import os
+import time
+import urllib.error
 import urllib.request
-from decimal import Decimal
-from typing import Dict, List
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Dict, List, Optional
 
 from core.prices.cache import TtlCache
 from core.prices.interface import PriceProvider
 
 # ── Symbol → CoinGecko coin-id mapping ────────────────────────────────────────
-# Extend this dict as new assets are added to the portfolio.
+# Extend this dict as new assets are added to the portfolio. Each entry must
+# be verified against CoinGecko's own /search results (exact symbol match,
+# not a guess) — see this module's docstring for the 2026-10-28 verification
+# pass and the two tickers (PUMP, TON) deliberately left unmapped.
 COINGECKO_IDS: Dict[str, str] = {
     "AAVE": "aave",
     "ARB":  "arbitrum",
@@ -29,24 +78,60 @@ COINGECKO_IDS: Dict[str, str] = {
     "DOGE": "dogecoin",
     "DOT":  "polkadot",
     "DYDX": "dydx",
+    "ENA":  "ethena",
     "ETH":  "ethereum",
     "FET":  "fetch-ai",
     "GRT":  "the-graph",
+    "HYPE": "hyperliquid",
+    "INJ":  "injective-protocol",
     "LINK": "chainlink",
+    "MON":  "monad",
+    "MORPHO": "morpho",
+    "NEAR": "near",
     "ONDO": "ondo-finance",
     "PENGU":"pudgy-penguins",
+    "RENDER": "render-token",
     "RUNE": "thorchain",
     "SOL":  "solana",
     "SOLX": "solaxy",
     "TAO":  "bittensor",
     "TICS": "qubetics",
     "UNI":  "uniswap",
+    "USDC": "usd-coin",
+    "USDT": "tether",
     "WOO":  "woo-network",
+    "XLM":  "stellar",
     "XRP":  "ripple",
 }
 
 _BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
+_MARKET_CHART_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart"
+_MARKET_CHART_RANGE_URL = "https://api.coingecko.com/api/v3/coins/{id}/market_chart/range"
 _HEADERS = {"User-Agent": "LedgerApp/1.0", "Accept": "application/json"}
+
+_MAX_RETRIES = 3            # bounded — never an infinite loop
+_RETRY_BACKOFF_SECONDS = 2.0  # multiplied by attempt number (2s, 4s, 6s)
+
+
+def _fetch_json_with_retry(url: str, headers: Dict[str, str], timeout: int) -> Optional[dict]:
+    """GET *url*, retrying only on HTTP 429 (rate limit) up to _MAX_RETRIES
+    times with a short linear backoff. Any other failure (network error,
+    timeout, 401/404/etc., malformed JSON) returns None immediately — no
+    point retrying a request that can never succeed. Never raises.
+    """
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            return None
+        except Exception:
+            return None
+    return None
 
 
 class CoinGeckoPriceProvider(PriceProvider):
@@ -56,8 +141,14 @@ class CoinGeckoPriceProvider(PriceProvider):
     Results are cached by (sorted-assets-tuple, fiat) with TTL.
     """
 
-    def __init__(self, ttl_seconds: int = 60) -> None:
+    def __init__(self, ttl_seconds: int = 60, api_key: Optional[str] = None) -> None:
         self._cache = TtlCache(ttl_seconds)
+        self._api_key = api_key if api_key is not None else os.environ.get("COINGECKO_API_KEY")
+
+    def _headers(self) -> Dict[str, str]:
+        if not self._api_key:
+            return _HEADERS
+        return {**_HEADERS, "x-cg-demo-api-key": self._api_key}
 
     def get_prices(self, assets: List[str], fiat: str) -> Dict[str, Decimal]:
         """Return prices in *fiat* for *assets* whose CoinGecko ID is known."""
@@ -77,7 +168,7 @@ class CoinGeckoPriceProvider(PriceProvider):
         url = f"{_BASE_URL}?ids={ids_param}&vs_currencies={fiat_lc}"
 
         try:
-            req = urllib.request.Request(url, headers=_HEADERS)
+            req = urllib.request.Request(url, headers=self._headers())
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data: dict = json.loads(resp.read())
         except Exception:
@@ -90,3 +181,100 @@ class CoinGeckoPriceProvider(PriceProvider):
 
         self._cache.set(cache_key, result)
         return result
+
+    def get_historical_prices(self, asset: str, fiat: str, days: int) -> Dict[date, Decimal]:
+        """Return {calendar_date: price} for *asset* over the trailing *days*
+        days, via ONE /coins/{id}/market_chart call — the whole requested
+        range in a single request (not one call per day).
+
+        Never raises. Returns {} when: asset has no CoinGecko ID mapping,
+        the request fails (network/HTTP/timeout), or the response can't be
+        parsed. Missing data is always an absent key, never a 0 price (a
+        caller must treat absence as "price unknown for that day", exactly
+        like get_prices() already does for live prices).
+
+        The returned price for a given date is CoinGecko's last data point
+        that falls on that UTC calendar date (see this module's docstring
+        and the project's backfill spike analysis for the precision
+        caveat this implies — this is an analytical approximation, not an
+        exact accounting timestamp).
+        """
+        asset_uc = asset.upper()
+        coin_id = COINGECKO_IDS.get(asset_uc)
+        if coin_id is None:
+            return {}
+        if days < 1:
+            return {}
+
+        fiat_lc = fiat.lower()
+        url = (
+            f"{_MARKET_CHART_URL.format(id=coin_id)}"
+            f"?vs_currency={fiat_lc}&days={days}&interval=daily"
+        )
+
+        data = _fetch_json_with_retry(url, self._headers(), timeout=10)
+        if data is None:
+            return {}
+        try:
+            points = data["prices"]  # list of [timestamp_ms, price]
+        except (KeyError, TypeError):
+            return {}
+
+        return _parse_market_chart_points(points)
+
+    def get_historical_prices_range(
+        self, asset: str, fiat: str, date_from: date, date_to: date,
+    ) -> Dict[date, Decimal]:
+        """Return {calendar_date: price} for *asset* over the explicit
+        [date_from, date_to] window, via ONE /coins/{id}/market_chart/range
+        call. Unlike get_historical_prices() (always trailing N days from
+        today), this can target an arbitrary past window — the building
+        block backfill_historical_prices() uses to chunk a long history
+        into several bounded-size requests (see this module's docstring
+        for the anonymous-tier 365-day lookback wall this still runs
+        into for old-enough windows — that failure surfaces the same way
+        as any other: an empty dict, never a raise).
+
+        Same never-raises contract, same "absent key = unknown price, not
+        a 0" contract, and the same retry-on-429 behaviour as
+        get_historical_prices().
+        """
+        asset_uc = asset.upper()
+        coin_id = COINGECKO_IDS.get(asset_uc)
+        if coin_id is None:
+            return {}
+        if date_from > date_to:
+            return {}
+
+        fiat_lc = fiat.lower()
+        from_ts = int(datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        to_ts = int(datetime.combine(date_to, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 86400
+        url = (
+            f"{_MARKET_CHART_RANGE_URL.format(id=coin_id)}"
+            f"?vs_currency={fiat_lc}&from={from_ts}&to={to_ts}"
+        )
+
+        data = _fetch_json_with_retry(url, self._headers(), timeout=15)
+        if data is None:
+            return {}
+        try:
+            points = data["prices"]
+        except (KeyError, TypeError):
+            return {}
+
+        return _parse_market_chart_points(points)
+
+
+def _parse_market_chart_points(points) -> Dict[date, Decimal]:
+    """Shared [timestamp_ms, price] list -> {date: Decimal} parser for
+    market_chart and market_chart/range responses. One malformed point
+    never voids the rest of the response."""
+    result: Dict[date, Decimal] = {}
+    for point in points:
+        try:
+            ts_ms, price = point[0], point[1]
+            day = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).date()
+            result[day] = Decimal(str(price))
+        except (IndexError, TypeError, ValueError, InvalidOperation):
+            continue
+    return result
