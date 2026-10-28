@@ -74,8 +74,15 @@ def _build_with_refs(db_path, price_provider=None):
           (isinstance(c, ft.Text) and c.value == ""), note_acc)
     # The note control always exists (value "" when nothing excluded); find
     # it by its distinctive combination of italic + small size instead.
-    note_acc2 = []
-    _find(view, lambda c: isinstance(c, ft.Text) and c.size == 10 and c.italic is True, note_acc2)
+    # Locate the Contributors section's own Column (titled "Portfolio
+    # Contributors") and take its note directly by position, rather than a
+    # page-wide style match -- the Allocation section below it reuses the
+    # same italic/size=10 note style for its own "Excluded (no live
+    # price): ..." disclosure, so a page-wide match would be ambiguous.
+    section_acc = []
+    _find(view, lambda c: isinstance(c, ft.Column) and len(c.controls) >= 1
+          and isinstance(c.controls[0], ft.Text) and c.controls[0].value == "Portfolio Contributors", section_acc)
+    note_acc2 = [section_acc[0].controls[-1]]
 
     # Contributors cards: two bordered Containers each holding a titled
     # Column ("Top Contributors" / "Worst Contributors").

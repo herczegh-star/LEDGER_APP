@@ -22,9 +22,11 @@ from typing import Optional
 
 import flet as ft
 
+from core.prices.coingecko import CoinGeckoPriceProvider
+from core.services.relative_strength_service import compute_relative_strength
 from core.services.ui_facade import (
-    get_dashboard_snapshot, get_earliest_ledger_date, get_portfolio_contributors,
-    get_portfolio_value_trend, run_sell_simulation,
+    compute_allocation, get_dashboard_snapshot, get_earliest_ledger_date,
+    get_portfolio_contributors, get_portfolio_value_trend, run_sell_simulation,
 )
 from ui.modules.portfolio_value_chart import build_portfolio_value_chart
 from core.asset_display import display_asset
@@ -42,6 +44,7 @@ BLUE      = "#1d4ed8"
 
 _ZERO = Decimal("0")
 _STABLECOINS = frozenset({"USDC", "USDT"})
+_ALLOCATION_BAR_WIDTH = 160
 
 _MODES = [
     ("all",             "All Positions"),
@@ -93,6 +96,15 @@ def _pct(v: Optional[Decimal]) -> str:
     if v is None:
         return "—"
     return f"{'+' if v >= 0 else ''}{float(v) * 100:.2f}%"
+
+
+def _pct_raw(v: Optional[Decimal]) -> str:
+    """Like _pct(), but for a value that's already a percentage NUMBER
+    (CoinGecko's 24h-change convention — 1.23 means +1.23%), not a
+    fraction to be multiplied by 100."""
+    if v is None:
+        return "—"
+    return f"{'+' if v >= 0 else ''}{float(v):.2f}%"
 
 
 def _amt(v: Decimal, asset: str) -> str:
@@ -295,6 +307,197 @@ def build_analysis_view(
         spacing=4,
     )
 
+    # ── Allocation (shares snap_holder with the Sell Simulator below) ──────────
+    allocation_rows_col = ft.Column(spacing=10)
+    allocation_concentration_row = ft.Row(spacing=24)
+    allocation_note = ft.Text("", size=10, color=T_MUT, italic=True, visible=False)
+
+    def _allocation_row(asset: str, pct: Decimal, muted: bool = False) -> ft.Row:
+        bar_color = T_MUT if muted else BLUE
+        filled = float(pct) / 100.0 * _ALLOCATION_BAR_WIDTH
+        filled = min(max(filled, 2.0), _ALLOCATION_BAR_WIDTH)
+        return ft.Row(
+            [
+                ft.Text(display_asset(asset), size=13, color=T_MUT if muted else T_PRI,
+                        weight=ft.FontWeight.W_600, width=64),
+                ft.Stack(
+                    [
+                        ft.Container(width=_ALLOCATION_BAR_WIDTH, height=8, bgcolor=BORDER, border_radius=4),
+                        ft.Container(width=filled, height=8, bgcolor=bar_color, border_radius=4),
+                    ],
+                    width=_ALLOCATION_BAR_WIDTH,
+                    height=8,
+                ),
+                ft.Text(f"{pct:.1f} %", size=13, color=T_MUT, width=56, text_align=ft.TextAlign.RIGHT),
+            ],
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def _render_allocation(snap) -> None:
+        alloc = compute_allocation(snap.positions, top_n=5)
+
+        row_controls = [_allocation_row(r.asset, r.pct) for r in alloc.rows]
+        if alloc.other_pct > _ZERO:
+            row_controls.append(_allocation_row("Other", alloc.other_pct, muted=True))
+
+        allocation_rows_col.controls = row_controls if row_controls else [
+            ft.Text("No data available.", size=12, color=T_MUT)
+        ]
+
+        allocation_concentration_row.controls = [
+            ft.Text(f"Top 1: {alloc.top1_pct:.1f} %", size=12, color=T_MUT),
+            ft.Text(f"Top 3: {alloc.top3_pct:.1f} %", size=12, color=T_MUT),
+        ] if alloc.rows else []
+
+        if alloc.excluded_assets:
+            allocation_note.value = f"Excluded (no live price): {', '.join(alloc.excluded_assets)}"
+            allocation_note.visible = True
+        else:
+            allocation_note.visible = False
+
+    allocation_card = ft.Container(
+        content=ft.Column(
+            [
+                allocation_rows_col,
+                ft.Container(height=12),
+                allocation_concentration_row,
+            ],
+            spacing=0,
+        ),
+        bgcolor=BG_CARD,
+        border=ft.border.all(1, BORDER),
+        border_radius=10,
+        padding=16,
+    )
+
+    allocation_section = ft.Column(
+        [
+            ft.Text("Allocation", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+            ft.Container(height=8),
+            allocation_card,
+            ft.Container(height=4),
+            allocation_note,
+        ],
+        spacing=4,
+    )
+
+    # ── Relative Strength (shares snap_holder with Allocation / Sell Simulator) ─
+    # Dedicated CoinGecko-only provider instance, held directly for the
+    # 24h-change capability — see core/prices/coingecko.py's module
+    # docstring and core/services/relative_strength_service.py's
+    # docstring for why this is NOT the generic *price_provider*
+    # (CompositePriceProvider has no equivalent to merge from two
+    # sources, so the live 24h figure stays CoinGecko-specific).
+    _rs_price_provider = CoinGeckoPriceProvider(ttl_seconds=60)
+
+    # Top-10/Bottom-10 collapse is pure presentation over an already-fetched,
+    # already-sorted row list — rs_rows_cache holds that one fetch; toggling
+    # only re-renders from the cache, never calls compute_relative_strength()
+    # again (no new fetch, no new API call).
+    _RS_HALF = 10
+    _RS_SHOW_ALL_THRESHOLD = 2 * _RS_HALF  # <= this many rows: always show all, no toggle
+    rs_rows_cache: list = [[]]
+    rs_expanded: list = [False]
+    rs_content_col = ft.Column(spacing=12)
+    rs_table_container = ft.Container(content=rs_content_col)
+    rs_note = ft.Text("", size=10, color=T_MUT, italic=True, visible=False)
+
+    def _rs_toggle_clicked(e=None) -> None:
+        rs_expanded[0] = not rs_expanded[0]
+        _rs_render_content()
+        page.update()
+
+    rs_toggle_btn = ft.TextButton("", on_click=_rs_toggle_clicked, style=ft.ButtonStyle(color=T_MUT))
+
+    def _rs_build_table(rows_slice) -> ft.DataTable:
+        rs_hdr = lambda t: ft.Text(t, size=11, color=T_MUT)
+        data_rows = []
+        for r in rows_slice:
+            # Very subtle highlight for outperforming-BTC rows only — no
+            # icons, no semaphore, same green/red values as before.
+            row_color = "#132a1d" if (r.vs_btc_7d is not None and r.vs_btc_7d > _ZERO) else None
+            data_rows.append(ft.DataRow(
+                color=row_color,
+                cells=[
+                    ft.DataCell(ft.Text(display_asset(r.asset), size=13, color=T_PRI,
+                                        weight=ft.FontWeight.W_600)),
+                    ft.DataCell(ft.Text(_pct_raw(r.change_24h_pct), size=12, color=_color(r.change_24h_pct))),
+                    ft.DataCell(ft.Text(_pct(r.return_7d), size=12, color=_color(r.return_7d))),
+                    ft.DataCell(ft.Text(_pct(r.return_30d), size=12, color=_color(r.return_30d))),
+                    ft.DataCell(ft.Text(_pct(r.vs_btc_7d), size=12, color=_color(r.vs_btc_7d))),
+                ],
+            ))
+        return ft.DataTable(
+            columns=[
+                ft.DataColumn(rs_hdr("Asset")),
+                ft.DataColumn(rs_hdr("24H"), numeric=True),
+                ft.DataColumn(rs_hdr("7D"), numeric=True),
+                ft.DataColumn(rs_hdr("30D"), numeric=True),
+                ft.DataColumn(rs_hdr("vs BTC (7D)"), numeric=True),
+            ],
+            rows=data_rows,
+            column_spacing=24,
+            horizontal_margin=16,
+            heading_row_color=BG_HDR,
+            border=ft.border.all(1, BORDER),
+            border_radius=8,
+        )
+
+    def _rs_render_content() -> None:
+        rows = rs_rows_cache[0]
+        n = len(rows)
+
+        if n == 0:
+            rs_content_col.controls = [ft.Text("No data available.", size=12, color=T_MUT)]
+            return
+
+        if n <= _RS_SHOW_ALL_THRESHOLD or rs_expanded[0]:
+            controls = [_rs_build_table(rows)]
+            if n > _RS_SHOW_ALL_THRESHOLD:  # expanded view of a long list -> offer to collapse back
+                rs_toggle_btn.text = "Show less"
+                controls.append(ft.Row([rs_toggle_btn], alignment=ft.MainAxisAlignment.CENTER))
+            rs_content_col.controls = controls
+            return
+
+        top = rows[:_RS_HALF]
+        top_assets = {r.asset for r in top}
+        bottom = [r for r in rows[-_RS_HALF:] if r.asset not in top_assets]  # defensive de-dup
+
+        rs_toggle_btn.text = f"Show all {n}"
+        rs_content_col.controls = [
+            _rs_build_table(top),
+            ft.Row([rs_toggle_btn], alignment=ft.MainAxisAlignment.CENTER),
+            _rs_build_table(bottom),
+        ]
+
+    def _render_relative_strength(snap) -> None:
+        rows = compute_relative_strength(db_path, snap.positions, _rs_price_provider, fiat)
+        rs_rows_cache[0] = rows
+        rs_expanded[0] = False  # a fresh fetch always starts collapsed
+        _rs_render_content()
+
+        # Only headline assets that WOULD be in scope but lack the
+        # historical price needed for 7D/30D — never the scope exclusions
+        # themselves (BTC/stablecoins/presale need no explanation here).
+        missing = sorted(r.asset for r in rows if r.return_7d is None or r.return_30d is None)
+        if missing:
+            rs_note.value = f"Missing historical data: {', '.join(missing)}"
+            rs_note.visible = True
+        else:
+            rs_note.visible = False
+
+    relative_strength_section = ft.Column(
+        [
+            ft.Text("Relative Strength", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+            ft.Container(height=8),
+            rs_table_container,
+            ft.Container(height=4),
+            rs_note,
+        ],
+        spacing=4,
+    )
+
     # ── Input controls (Sell Simulator) ─────────────────────────────────────────
     venue_dd = ft.Dropdown(
         label="Venue",
@@ -468,6 +671,10 @@ def build_analysis_view(
             ft.Container(height=28),
             contributors_section,
             ft.Container(height=28),
+            allocation_section,
+            ft.Container(height=28),
+            relative_strength_section,
+            ft.Container(height=28),
             ft.Divider(height=1, color=BORDER),
             ft.Container(height=20),
             ft.Text("Sell Simulator", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
@@ -509,6 +716,8 @@ def build_analysis_view(
         snap = get_dashboard_snapshot(db_path, price_provider, fiat)
         snap_holder[0] = snap
         _populate_venues(snap)
+        _render_allocation(snap)
+        _render_relative_strength(snap)
         page.update()
 
     return view, run

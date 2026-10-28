@@ -25,6 +25,19 @@ get_historical_prices() / get_historical_prices_range() (new):
     directly (see core/services/historical_price_service.py), not the
     generic live price_provider used by the Dashboard.
 
+get_prices_with_24h_change() (new):
+    Same deliberately-not-on-the-interface pattern as
+    get_historical_prices() above — Coinbase has no equivalent live
+    24h-change figure wired up, and CompositePriceProvider has no way to
+    merge a "24h change" from two different sources meaningfully, so this
+    stays CoinGecko-only (see core/services/relative_strength_service.py,
+    which holds a CoinGeckoPriceProvider instance directly for this one
+    field, exactly like the backfill service does for history). Verified
+    empirically (2026-10-28) against the real /simple/price endpoint with
+    include_24hr_change=true: the field is named "{fiat}_24h_change" and
+    is already a percentage NUMBER (e.g. 0.39 means +0.39%, not a
+    fraction) — not a guess from memory.
+
 Mapping verification (2026-10-28, per-ticker CoinGecko /search lookup —
 see the Etapa 1 validation follow-up conversation for full reasoning):
     ENA, HYPE, INJ, MORPHO, NEAR, RENDER, XLM were each the sole coin on
@@ -68,6 +81,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional
@@ -148,6 +162,19 @@ def _fetch_json_with_retry(url: str, headers: Dict[str, str], timeout: int) -> O
     return None
 
 
+@dataclass
+class PriceWithChange:
+    """One asset's live spot price plus CoinGecko's own 24h % change.
+
+    change_24h_pct is already a percentage NUMBER (CoinGecko convention:
+    0.39 means +0.39%, not a fraction) — see this module's docstring for
+    the empirical verification. None when CoinGecko omitted the field
+    for this coin (never fabricated as 0)."""
+
+    price: Decimal
+    change_24h_pct: Optional[Decimal]
+
+
 class CoinGeckoPriceProvider(PriceProvider):
     """Fetch prices via CoinGecko /simple/price endpoint.
 
@@ -192,6 +219,64 @@ class CoinGeckoPriceProvider(PriceProvider):
         for asset, coin_id in id_map.items():
             if coin_id in data and fiat_lc in data[coin_id]:
                 result[asset] = Decimal(str(data[coin_id][fiat_lc]))
+
+        self._cache.set(cache_key, result)
+        return result
+
+    def get_prices_with_24h_change(self, assets: List[str], fiat: str) -> Dict[str, PriceWithChange]:
+        """Return {asset: PriceWithChange} via ONE /simple/price call with
+        include_24hr_change=true — CoinGecko's own 24h window, never
+        reconstructed from historical_prices' daily buckets (see this
+        module's docstring: a daily UTC-midnight anchor cannot give a
+        genuine 24h figure relative to "now").
+
+        Same never-raises, same cache-by-(assets,fiat) pattern as
+        get_prices(). A coin missing from the response, or missing just
+        the change field, never crashes the rest: absent key means
+        unknown price (asset dropped from the result dict, exactly like
+        get_prices()); a present price with no change field yields
+        change_24h_pct=None for that one asset, every other asset in the
+        same call is unaffected.
+        """
+        fiat_lc = fiat.lower()
+        cache_key = (tuple(sorted(assets)), fiat_lc, "24h_change")
+
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        id_map = {a: COINGECKO_IDS[a] for a in assets if a in COINGECKO_IDS}
+        if not id_map:
+            return {}
+
+        ids_param = ",".join(id_map.values())
+        url = (
+            f"{_BASE_URL}?ids={ids_param}&vs_currencies={fiat_lc}"
+            f"&include_24hr_change=true"
+        )
+
+        data = _fetch_json_with_retry(url, self._headers(), timeout=5)
+        if data is None:
+            return {}
+
+        change_field = f"{fiat_lc}_24h_change"
+        result: Dict[str, PriceWithChange] = {}
+        for asset, coin_id in id_map.items():
+            coin_data = data.get(coin_id)
+            if not isinstance(coin_data, dict) or fiat_lc not in coin_data:
+                continue
+            try:
+                price = Decimal(str(coin_data[fiat_lc]))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+            change_raw = coin_data.get(change_field)
+            change: Optional[Decimal] = None
+            if change_raw is not None:
+                try:
+                    change = Decimal(str(change_raw))
+                except (InvalidOperation, TypeError, ValueError):
+                    change = None
+            result[asset] = PriceWithChange(price=price, change_24h_pct=change)
 
         self._cache.set(cache_key, result)
         return result

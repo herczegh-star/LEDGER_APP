@@ -30,7 +30,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Any, Dict, FrozenSet, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,113 @@ def compute_presale_summary(
     value = sum((p.value for p in matched if p.value is not None), Decimal("0"))
     cost_basis = sum((p.cost_basis for p in matched), Decimal("0"))
     return PresaleSummaryDTO(value=value, cost_basis=cost_basis, pnl=value - cost_basis)
+
+
+_PCT_PLACES = Decimal("0.1")
+_TENTH = Decimal("10")  # multiplier to work in tenths-of-a-percent integers
+
+
+def _round_pct_shares(raw_pcts: List[Decimal]) -> List[Decimal]:
+    """Round each raw percentage (already summing to ~100) to 1 decimal
+    place so the rounded values sum to EXACTLY 100.0 — largest-remainder
+    method. A plain independent round() per item can land on 99.9 or
+    100.1 purely from rounding noise; this never does, as long as the
+    inputs already sum to (very close to) 100."""
+    if not raw_pcts:
+        return []
+    tenths = [p * _TENTH for p in raw_pcts]
+    floors = [t.to_integral_value(rounding=ROUND_FLOOR) for t in tenths]
+    remainders = [t - f for t, f in zip(tenths, floors)]
+    target = int((Decimal("100") * _TENTH).to_integral_value(rounding=ROUND_HALF_UP))
+    deficit = target - int(sum(floors))
+    bumped = set(sorted(range(len(raw_pcts)), key=lambda i: remainders[i], reverse=True)[:max(deficit, 0)])
+    return [
+        (f + (1 if i in bumped else 0)) / _TENTH
+        for i, f in enumerate(floors)
+    ]
+
+
+@dataclass
+class AllocationRowDTO:
+    """One ranked row in the Allocation list."""
+
+    asset: str
+    value: Decimal
+    pct: Decimal  # rounded to 1 decimal place; see compute_allocation()
+
+
+@dataclass
+class AllocationDTO:
+    """Current-value allocation of the headline portfolio, Top N + Other.
+
+    rows: Top top_n assets by value, descending, pct already rounded so
+    that sum(row.pct for row in rows) + other_pct == 100.0 exactly
+    (within the assets included — see excluded_assets).
+    other_pct: aggregate share of all included headline assets beyond
+    the Top N. Decimal("0") when there are top_n or fewer included assets.
+    top1_pct / top3_pct: share of the single largest / three largest
+    positions, independently rounded (not tied to the Top-N/Other split).
+    excluded_assets: headline, quantity>0 assets with value=None (no live
+    price) — excluded from both numerator and denominator, never treated
+    as 0. Empty when nothing is excluded.
+    """
+
+    rows: List[AllocationRowDTO]
+    other_pct: Decimal
+    top1_pct: Decimal
+    top3_pct: Decimal
+    excluded_assets: List[str]
+
+
+def compute_allocation(positions: List[PositionDTO], top_n: int = 5) -> AllocationDTO:
+    """Current allocation of the headline portfolio by live market value.
+
+        weight_i = value_i / total_headline_value
+
+    Scope mirrors the Dashboard headline KPIs exactly: starts from
+    compute_headline_positions() (excludes PRESALE_ASSETS), then keeps
+    only quantity > 0 (drops closed/zero positions) and value is not
+    None (drops assets with no live price — see excluded_assets below,
+    never substituted with 0). Pure function over an already-computed
+    position list; does not fetch, price, or touch compute_positions().
+    """
+    headline = compute_headline_positions(positions)
+    open_positions = [p for p in headline if p.quantity > _ZERO]
+    excluded = sorted(p.asset for p in open_positions if p.value is None)
+    candidates = [p for p in open_positions if p.value is not None]
+
+    total = sum((p.value for p in candidates), _ZERO)
+    if total <= _ZERO:
+        return AllocationDTO(rows=[], other_pct=_ZERO, top1_pct=_ZERO, top3_pct=_ZERO, excluded_assets=excluded)
+
+    def pct_of(value: Decimal) -> Decimal:
+        return (value / total) * Decimal("100")
+
+    ranked = sorted(candidates, key=lambda p: p.value, reverse=True)
+    top1_pct = pct_of(ranked[0].value).quantize(_PCT_PLACES, rounding=ROUND_HALF_UP)
+    top3_value = sum((p.value for p in ranked[:3]), _ZERO)
+    top3_pct = pct_of(top3_value).quantize(_PCT_PLACES, rounding=ROUND_HALF_UP)
+
+    top_rows = ranked[:top_n]
+    rest = ranked[top_n:]
+    raw_pcts = [pct_of(p.value) for p in top_rows]
+    include_other = len(rest) > 0
+    if include_other:
+        raw_pcts.append(pct_of(sum((p.value for p in rest), _ZERO)))
+
+    rounded_pcts = _round_pct_shares(raw_pcts)
+
+    rows = [
+        AllocationRowDTO(asset=p.asset, value=p.value, pct=rounded_pcts[i])
+        for i, p in enumerate(top_rows)
+    ]
+    other_pct = rounded_pcts[-1] if include_other else _ZERO
+
+    return AllocationDTO(
+        rows=rows, other_pct=other_pct,
+        top1_pct=top1_pct, top3_pct=top3_pct,
+        excluded_assets=excluded,
+    )
 
 
 @dataclass
