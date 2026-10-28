@@ -1,0 +1,1322 @@
+{
+  "_meta": {
+    "distinct_assets": [
+      "AAVE",
+      "ARB",
+      "ATOM",
+      "AVAX",
+      "B3",
+      "BTC",
+      "CZK",
+      "DOGE",
+      "DOT",
+      "DYDX",
+      "ENA",
+      "ETH",
+      "FET",
+      "GRT",
+      "HYPE",
+      "INJ",
+      "LINK",
+      "MON",
+      "MORPHO",
+      "NEAR",
+      "ONDO",
+      "PENGU",
+      "RENDER",
+      "RUNE",
+      "SOL",
+      "SOLX",
+      "TAO",
+      "TICS",
+      "TON",
+      "UNI",
+      "USDC",
+      "USDT",
+      "WOO",
+      "XLM",
+      "XRP"
+    ],
+    "distinct_currencies": [
+      "ATOM",
+      "BTC",
+      "CZK",
+      "DOGE",
+      "DOT",
+      "ETH",
+      "GRT",
+      "HYPE",
+      "INJ",
+      "NEAR",
+      "RENDER",
+      "SOLX",
+      "TICS",
+      "USDC",
+      "USDT",
+      "WOO",
+      "XLM"
+    ],
+    "distinct_types": [
+      "BUY",
+      "FEE",
+      "REVERSAL",
+      "SELL",
+      "STAKING",
+      "TRANSFER"
+    ],
+    "distinct_venues": [
+      "anycoin",
+      "bybit",
+      "kraken",
+      "ledger wallet",
+      "qubetics wallet",
+      "revolut",
+      "solaxy wallet",
+      "tresor",
+      "trust wallet"
+    ],
+    "note": "price_provider=None by design — spot_price/value/unrealized_pnl/roi_total are excluded (non-deterministic, market-price dependent). Only ledger-derived numbers are frozen here.",
+    "purpose": "Phase 0 golden master — cash accounts feature — pre-implementation baseline",
+    "source_db_path": "C:\\Users\\hercz\\.ledger_app\\ledger_before_verify_tmp.db",
+    "source_db_sha256": "9be7982006810f47098d261629f580f6de95db8dcd2fd13cab92e7fb5ec04ba9",
+    "total_rows": 584
+  },
+  "compute_positions": [
+    {
+      "asset": "AAVE",
+      "cost_basis": "30803.564042",
+      "quantity": "10.69850764",
+      "realized_pnl": "0",
+      "wac": "2879.239336786602509730974030"
+    },
+    {
+      "asset": "ARB",
+      "cost_basis": "30177.99999980676200000000000",
+      "quantity": "6322.76881815",
+      "realized_pnl": "0",
+      "wac": "4.772908968801526352861786864"
+    },
+    {
+      "asset": "ATOM",
+      "cost_basis": "94999.999999955560",
+      "quantity": "1169.95871867",
+      "realized_pnl": "0",
+      "wac": "81.19944617187076772126466229"
+    },
+    {
+      "asset": "AVAX",
+      "cost_basis": "30000.00",
+      "quantity": "78.52237806",
+      "realized_pnl": "0",
+      "wac": "382.0566918780350550172830565"
+    },
+    {
+      "asset": "B3",
+      "cost_basis": "3168.51519972307277",
+      "quantity": "48416.85563",
+      "realized_pnl": "0",
+      "wac": "0.06544239931516330834473068816"
+    },
+    {
+      "asset": "BTC",
+      "cost_basis": "76153.19304739476430604419660",
+      "quantity": "0.04076323",
+      "realized_pnl": "0",
+      "wac": "1868183.484169305629265497278"
+    },
+    {
+      "asset": "DOGE",
+      "cost_basis": "42694.54618592665640300694882",
+      "quantity": "9679.92556595",
+      "realized_pnl": "0",
+      "wac": "4.410627529627761166556095900"
+    },
+    {
+      "asset": "DOT",
+      "cost_basis": "157783.0021252960286",
+      "quantity": "1268.89214154",
+      "realized_pnl": "0",
+      "wac": "124.3470559552851847824203682"
+    },
+    {
+      "asset": "DYDX",
+      "cost_basis": "100207.2803229547859",
+      "quantity": "7895.36616378",
+      "realized_pnl": "0",
+      "wac": "12.69191045029118249252917868"
+    },
+    {
+      "asset": "ENA",
+      "cost_basis": "4823.00",
+      "quantity": "2060.39921792",
+      "realized_pnl": "0",
+      "wac": "2.340808498689337339816029277"
+    },
+    {
+      "asset": "ETH",
+      "cost_basis": "83979.8957396079242454425509",
+      "quantity": "1.918869329",
+      "realized_pnl": "0",
+      "wac": "43765.30202990592708850501977"
+    },
+    {
+      "asset": "FET",
+      "cost_basis": "38977.57999989442850000000000",
+      "quantity": "6287.43935127",
+      "realized_pnl": "0",
+      "wac": "6.199277292753741845351199747"
+    },
+    {
+      "asset": "GRT",
+      "cost_basis": "14911.479999512462",
+      "quantity": "10377.10764839",
+      "realized_pnl": "0",
+      "wac": "1.436959170586031866465557125"
+    },
+    {
+      "asset": "HYPE",
+      "cost_basis": "8238.266599860814293166960358",
+      "quantity": "5.993712",
+      "realized_pnl": "520.280213042997630461069748",
+      "wac": "1374.484893478501184769465126"
+    },
+    {
+      "asset": "INJ",
+      "cost_basis": "15510.28327001640413603776461",
+      "quantity": "143.29408874",
+      "realized_pnl": "0",
+      "wac": "108.2409149351515959543675215"
+    },
+    {
+      "asset": "LINK",
+      "cost_basis": "21247.00",
+      "quantity": "82.55126815",
+      "realized_pnl": "0",
+      "wac": "257.3794500817732138013194168"
+    },
+    {
+      "asset": "MON",
+      "cost_basis": "2436.50",
+      "quantity": "3466.03336028",
+      "realized_pnl": "0",
+      "wac": "0.7029649592879769083928743449"
+    },
+    {
+      "asset": "MORPHO",
+      "cost_basis": "2585.24",
+      "quantity": "51.217",
+      "realized_pnl": "0",
+      "wac": "50.47620907120682585860163618"
+    },
+    {
+      "asset": "NEAR",
+      "cost_basis": "15925.67473279927749325827176",
+      "quantity": "334.53310352",
+      "realized_pnl": "0",
+      "wac": "47.60567658395326476735121212"
+    },
+    {
+      "asset": "ONDO",
+      "cost_basis": "49584.73477633933727",
+      "quantity": "5210.88689577",
+      "realized_pnl": "0",
+      "wac": "9.515603728914235510140743260"
+    },
+    {
+      "asset": "PENGU",
+      "cost_basis": "7244.047097174853475187231019",
+      "quantity": "41390.606389",
+      "realized_pnl": "0",
+      "wac": "0.1750166941042940871321582275"
+    },
+    {
+      "asset": "RENDER",
+      "cost_basis": "13143.17454555541075716289247",
+      "quantity": "357.2804366",
+      "realized_pnl": "0",
+      "wac": "36.78671765694828071412766649"
+    },
+    {
+      "asset": "RUNE",
+      "cost_basis": "100752.999999966457",
+      "quantity": "3069.10519235",
+      "realized_pnl": "0",
+      "wac": "32.82813513564204015804398207"
+    },
+    {
+      "asset": "SOL",
+      "cost_basis": "43230.3131319999972",
+      "quantity": "17.02394204",
+      "realized_pnl": "0",
+      "wac": "2539.383242167100164774762121"
+    },
+    {
+      "asset": "SOLX",
+      "cost_basis": "104029.9557195076835275483401",
+      "quantity": "3704848.73",
+      "realized_pnl": "0",
+      "wac": "0.02807940709619949409582192040"
+    },
+    {
+      "asset": "TAO",
+      "cost_basis": "8943.9002208",
+      "quantity": "1.543329",
+      "realized_pnl": "0",
+      "wac": "5795.2"
+    },
+    {
+      "asset": "TICS",
+      "cost_basis": "134246.0541718231852190879683",
+      "quantity": "72425.00",
+      "realized_pnl": "0",
+      "wac": "1.853587216732111635748539431"
+    },
+    {
+      "asset": "TON",
+      "cost_basis": "4867.00",
+      "quantity": "124.79676253",
+      "realized_pnl": "0",
+      "wac": "38.99940912994451860160766945"
+    },
+    {
+      "asset": "UNI",
+      "cost_basis": "174075.8384375787980000000000",
+      "quantity": "1468.64053558",
+      "realized_pnl": "0",
+      "wac": "118.5285535979246527559609414"
+    },
+    {
+      "asset": "USDC",
+      "cost_basis": "2580.803565943787605628745833",
+      "quantity": "153.671047",
+      "realized_pnl": "0",
+      "wac": "16.79433840223518230879721821"
+    },
+    {
+      "asset": "USDT",
+      "cost_basis": "0",
+      "quantity": "0.0000",
+      "realized_pnl": "0",
+      "wac": "0"
+    },
+    {
+      "asset": "WOO",
+      "cost_basis": "112101.1494611684435535437180",
+      "quantity": "60501.27682432",
+      "realized_pnl": "0",
+      "wac": "1.852872457331455613036627972"
+    },
+    {
+      "asset": "XLM",
+      "cost_basis": "3358.839801845288751356811039",
+      "quantity": "905.293800",
+      "realized_pnl": "0",
+      "wac": "3.710220706079384119671217277"
+    },
+    {
+      "asset": "XRP",
+      "cost_basis": "12931.50000000000000000000000",
+      "quantity": "349.17098000",
+      "realized_pnl": "0",
+      "wac": "37.03486469580032109197620031"
+    }
+  ],
+  "compute_venue_holdings": {
+    "anycoin": {
+      "ARB": "3434.93189",
+      "ATOM": "1169.95871867",
+      "B3": "10002.55563",
+      "DOGE": "9029.15556595",
+      "DOT": "1253.37335993",
+      "DYDX": "7715.71135378",
+      "ETH": "0.05563753",
+      "FET": "3018.40526476",
+      "GRT": "10377.10764839",
+      "ONDO": "818.24226",
+      "RUNE": "3069.10519235",
+      "SOL": "0.56719904",
+      "UNI": "776.79472209"
+    },
+    "bybit": {
+      "AAVE": "10.69850764",
+      "BTC": "0.01664757",
+      "ENA": "2060.39921792",
+      "ETH": "1.664003629",
+      "HYPE": "-0.006288",
+      "INJ": "143.29408874",
+      "LINK": "51.09007129",
+      "MON": "3466.03336028",
+      "NEAR": "334.53310352",
+      "ONDO": "3467.58732223",
+      "PENGU": "39586.616389",
+      "RENDER": "357.2804366",
+      "SOL": "6",
+      "TON": "124.79676253",
+      "UNI": "413.45776881",
+      "USDC": "43.238747",
+      "XLM": "905.293800",
+      "XRP": "244.82"
+    },
+    "kraken": {
+      "B3": "38414.3",
+      "DOGE": "650.77",
+      "DOT": "15.51878161",
+      "DYDX": "179.65481",
+      "ETH": "0.03411",
+      "FET": "424.649887",
+      "MORPHO": "51.217",
+      "ONDO": "100.0",
+      "PENGU": "1803.99",
+      "SOL": "1.6062",
+      "TAO": "1.543329",
+      "USDC": "10.4323"
+    },
+    "ledger wallet": {
+      "WOO": "60501.27682432"
+    },
+    "qubetics wallet": {
+      "TICS": "72425.00"
+    },
+    "revolut": {
+      "ARB": "2887.83692815",
+      "AVAX": "78.52237806",
+      "ETH": "0.16015841",
+      "FET": "2844.38419951",
+      "HYPE": "6",
+      "LINK": "31.46119686",
+      "ONDO": "825.05731354",
+      "SOL": "8.85054300",
+      "UNI": "278.38804468",
+      "USDC": "100",
+      "XRP": "104.35098000"
+    },
+    "solaxy wallet": {
+      "SOLX": "3704848.73"
+    },
+    "tresor": {
+      "BTC": "0.02411566"
+    },
+    "trust wallet": {
+      "ETH": "0.00495976"
+    }
+  },
+  "dashboard_snapshot": {
+    "assets_held": 33,
+    "by_venue": {
+      "anycoin": {
+        "assets_held": 13,
+        "cost_basis_total": "668740.3460844208452430069488",
+        "holdings": {
+          "ARB": "3434.93189",
+          "ATOM": "1169.95871867",
+          "B3": "10002.55563",
+          "DOGE": "9029.15556595",
+          "DOT": "1253.37335993",
+          "DYDX": "7715.71135378",
+          "ETH": "0.05563753",
+          "FET": "3018.40526476",
+          "GRT": "10377.10764839",
+          "ONDO": "818.24226",
+          "RUNE": "3069.10519235",
+          "SOL": "0.56719904",
+          "UNI": "776.79472209"
+        },
+        "invested": {
+          "CZK": "1071515.479995258058340000000"
+        },
+        "net_flow": {
+          "CZK": "-1071515.479995258058340000000"
+        },
+        "positions": [
+          {
+            "asset": "ARB",
+            "cost_basis": "19999.999999806762",
+            "quantity": "3434.93189",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "5.822531753258945114047079402"
+          },
+          {
+            "asset": "ATOM",
+            "cost_basis": "94999.999999955560",
+            "quantity": "1169.95871867",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "81.19944617187076772126466229"
+          },
+          {
+            "asset": "B3",
+            "cost_basis": "709.99999972307247",
+            "quantity": "10002.55563",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.07098185963531326743543439808"
+          },
+          {
+            "asset": "DOGE",
+            "cost_basis": "40006.86608592665640300694882",
+            "quantity": "9029.15556595",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "4.430853560303825103130595466"
+          },
+          {
+            "asset": "DOT",
+            "cost_basis": "156892.9999999625286",
+            "quantity": "1253.37335993",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "125.1765874525407893795332105"
+          },
+          {
+            "asset": "DYDX",
+            "cost_basis": "98999.999999754786",
+            "quantity": "7715.71135378",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "12.83096210581461801834003859"
+          },
+          {
+            "asset": "ETH",
+            "cost_basis": "1973.0000000000000000000000",
+            "quantity": "0.05563753",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "35461.67488024720004644347080"
+          },
+          {
+            "asset": "FET",
+            "cost_basis": "22499.9999998944285",
+            "quantity": "3018.40526476",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "7.454267411531119456474798015"
+          },
+          {
+            "asset": "GRT",
+            "cost_basis": "14911.479999512462",
+            "quantity": "10377.10764839",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "1.436959170586031866465557125"
+          },
+          {
+            "asset": "ONDO",
+            "cost_basis": "10499.99999993933707",
+            "quantity": "818.24226",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "12.83238536217786779920166920"
+          },
+          {
+            "asset": "RUNE",
+            "cost_basis": "100752.999999966457",
+            "quantity": "3069.10519235",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "32.82813513564204015804398207"
+          },
+          {
+            "asset": "SOL",
+            "cost_basis": "2109.9999999999972",
+            "quantity": "0.56719904",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "3720.034504994925943457168052"
+          },
+          {
+            "asset": "UNI",
+            "cost_basis": "104382.999999978798",
+            "quantity": "776.79472209",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "134.3765566778463614470771693"
+          }
+        ]
+      },
+      "bybit": {
+        "assets_held": 17,
+        "cost_basis_total": "285111.5576599956887288837580",
+        "holdings": {
+          "AAVE": "10.69850764",
+          "BTC": "0.01664757",
+          "ENA": "2060.39921792",
+          "ETH": "1.664003629",
+          "HYPE": "-0.006288",
+          "INJ": "143.29408874",
+          "LINK": "51.09007129",
+          "MON": "3466.03336028",
+          "NEAR": "334.53310352",
+          "ONDO": "3467.58732223",
+          "PENGU": "39586.616389",
+          "RENDER": "357.2804366",
+          "SOL": "6",
+          "TON": "124.79676253",
+          "UNI": "413.45776881",
+          "USDC": "43.238747",
+          "XLM": "905.293800",
+          "XRP": "244.82"
+        },
+        "invested": {
+          "CZK": "285084.7754735000000000000000"
+        },
+        "net_flow": {
+          "CZK": "-285084.7754735000000000000000"
+        },
+        "positions": [
+          {
+            "asset": "AAVE",
+            "cost_basis": "30803.564042",
+            "quantity": "10.69850764",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "2879.239336786602509730974030"
+          },
+          {
+            "asset": "BTC",
+            "cost_basis": "24260.783736",
+            "quantity": "0.01664757",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "1457316.817769800637570528311"
+          },
+          {
+            "asset": "ENA",
+            "cost_basis": "4823.00",
+            "quantity": "2060.39921792",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "2.340808498689337339816029277"
+          },
+          {
+            "asset": "ETH",
+            "cost_basis": "69154.8420815",
+            "quantity": "1.664003629",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "41559.30965310412793576906316"
+          },
+          {
+            "asset": "HYPE",
+            "cost_basis": "-5.143613182183337294109389",
+            "quantity": "-0.006288",
+            "realized_pnl": "0",
+            "roi_realized": "-0.00",
+            "wac": "0"
+          },
+          {
+            "asset": "INJ",
+            "cost_basis": "15510.28327001640413603776461",
+            "quantity": "143.29408874",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "108.2409149351515959543675215"
+          },
+          {
+            "asset": "LINK",
+            "cost_basis": "9747.00",
+            "quantity": "51.09007129",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "190.7807085387216338722787482"
+          },
+          {
+            "asset": "MON",
+            "cost_basis": "2436.50",
+            "quantity": "3466.03336028",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.7029649592879769083928743449"
+          },
+          {
+            "asset": "NEAR",
+            "cost_basis": "15925.67473279927749325827176",
+            "quantity": "334.53310352",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "47.60567658395326476735121212"
+          },
+          {
+            "asset": "ONDO",
+            "cost_basis": "26665.7347764",
+            "quantity": "3467.58732223",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "7.689996616797903028593574464"
+          },
+          {
+            "asset": "PENGU",
+            "cost_basis": "6752.452702069139969605214501",
+            "quantity": "39586.616389",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.1705741313103348588797020285"
+          },
+          {
+            "asset": "RENDER",
+            "cost_basis": "13143.17454555541075716289247",
+            "quantity": "357.2804366",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "36.78671765694828071412766649"
+          },
+          {
+            "asset": "SOL",
+            "cost_basis": "9935.8524",
+            "quantity": "6",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "1655.9754"
+          },
+          {
+            "asset": "TON",
+            "cost_basis": "4867.00",
+            "quantity": "124.79676253",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "38.99940912994451860160766945"
+          },
+          {
+            "asset": "UNI",
+            "cost_basis": "39692.83843760000000000000000",
+            "quantity": "413.45776881",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "96.00215894320372584221221372"
+          },
+          {
+            "asset": "USDC",
+            "cost_basis": "707.660747392350958756912969",
+            "quantity": "43.238747",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "16.36635648559267822346732131"
+          },
+          {
+            "asset": "XLM",
+            "cost_basis": "3358.839801845288751356811039",
+            "quantity": "905.293800",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "3.710220706079384119671217277"
+          },
+          {
+            "asset": "XRP",
+            "cost_basis": "7331.500000000000000000000000",
+            "quantity": "244.82",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "29.94649129973041418184788824"
+          }
+        ]
+      },
+      "kraken": {
+        "assets_held": 12,
+        "cost_basis_total": "32435.52163009229704032065572",
+        "holdings": {
+          "B3": "38414.3",
+          "DOGE": "650.77",
+          "DOT": "15.51878161",
+          "DYDX": "179.65481",
+          "ETH": "0.03411",
+          "FET": "424.649887",
+          "MORPHO": "51.217",
+          "ONDO": "100.0",
+          "PENGU": "1803.99",
+          "SOL": "1.6062",
+          "TAO": "1.543329",
+          "USDC": "10.4323"
+        },
+        "invested": {
+          "CZK": "34115.7297379335004"
+        },
+        "net_flow": {
+          "CZK": "-34115.7297379335004"
+        },
+        "positions": [
+          {
+            "asset": "B3",
+            "cost_basis": "2458.5152000000003",
+            "quantity": "38414.3",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.06400000000000000780959174058"
+          },
+          {
+            "asset": "DOGE",
+            "cost_basis": "2687.6801",
+            "quantity": "650.77",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "4.13"
+          },
+          {
+            "asset": "DOT",
+            "cost_basis": "890.0021253335",
+            "quantity": "15.51878161",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "57.35"
+          },
+          {
+            "asset": "DYDX",
+            "cost_basis": "1207.2803231999999",
+            "quantity": "179.65481",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "6.719999999999999443376996141"
+          },
+          {
+            "asset": "ETH",
+            "cost_basis": "2518.9777926",
+            "quantity": "0.03411",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "73848.66"
+          },
+          {
+            "asset": "FET",
+            "cost_basis": "2477.58",
+            "quantity": "424.649887",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "5.834406356500455162019152969"
+          },
+          {
+            "asset": "MORPHO",
+            "cost_basis": "2585.24",
+            "quantity": "51.217",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "50.47620907120682585860163618"
+          },
+          {
+            "asset": "ONDO",
+            "cost_basis": "1919.0000000000002",
+            "quantity": "100.0",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "19.190000000000002"
+          },
+          {
+            "asset": "PENGU",
+            "cost_basis": "569.339244",
+            "quantity": "1803.99",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.3156"
+          },
+          {
+            "asset": "SOL",
+            "cost_basis": "6003.750732",
+            "quantity": "1.6062",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "3737.86"
+          },
+          {
+            "asset": "TAO",
+            "cost_basis": "8943.9002208",
+            "quantity": "1.543329",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "5795.2"
+          },
+          {
+            "asset": "USDC",
+            "cost_basis": "174.2558921587966403206557227",
+            "quantity": "10.4323",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "16.70349703888851358958769616"
+          }
+        ]
+      },
+      "ledger wallet": {
+        "assets_held": 1,
+        "cost_basis_total": "112101.1494611684435535437180",
+        "holdings": {
+          "WOO": "60501.27682432"
+        },
+        "invested": {},
+        "net_flow": {},
+        "positions": [
+          {
+            "asset": "WOO",
+            "cost_basis": "112101.1494611684435535437180",
+            "quantity": "60501.27682432",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "1.852872457331455613036627972"
+          }
+        ]
+      },
+      "qubetics wallet": {
+        "assets_held": 1,
+        "cost_basis_total": "134246.0541718231852190879683",
+        "holdings": {
+          "TICS": "72425.00"
+        },
+        "invested": {},
+        "net_flow": {},
+        "positions": [
+          {
+            "asset": "TICS",
+            "cost_basis": "134246.0541718231852190879683",
+            "quantity": "72425.00",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "1.853587216732111635748539431"
+          }
+        ]
+      },
+      "revolut": {
+        "assets_held": 11,
+        "cost_basis_total": "156873.3447038888513589587696",
+        "holdings": {
+          "ARB": "2887.83692815",
+          "AVAX": "78.52237806",
+          "ETH": "0.16015841",
+          "FET": "2844.38419951",
+          "HYPE": "6",
+          "LINK": "31.46119686",
+          "ONDO": "825.05731354",
+          "SOL": "8.85054300",
+          "UNI": "278.38804468",
+          "USDC": "100",
+          "XRP": "104.35098000"
+        },
+        "invested": {
+          "CZK": "157951.0900000000000000000000"
+        },
+        "net_flow": {
+          "CZK": "-154681.8400000000000000000000"
+        },
+        "positions": [
+          {
+            "asset": "ARB",
+            "cost_basis": "10178.00000000000000000000000",
+            "quantity": "2887.83692815",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "3.524437235630271161438468636"
+          },
+          {
+            "asset": "AVAX",
+            "cost_basis": "30000.00",
+            "quantity": "78.52237806",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "382.0566918780350550172830565"
+          },
+          {
+            "asset": "ETH",
+            "cost_basis": "10000.00",
+            "quantity": "0.16015841",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "62438.18229713943838478416463"
+          },
+          {
+            "asset": "FET",
+            "cost_basis": "14000.00000000000000000000000",
+            "quantity": "2844.38419951",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "4.921979246830217180557677974"
+          },
+          {
+            "asset": "HYPE",
+            "cost_basis": "8244.2850",
+            "quantity": "6",
+            "realized_pnl": "521.1550",
+            "roi_realized": "6.32",
+            "wac": "1374.0475"
+          },
+          {
+            "asset": "LINK",
+            "cost_basis": "11500.00",
+            "quantity": "31.46119686",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "365.5296412013233243536558831"
+          },
+          {
+            "asset": "ONDO",
+            "cost_basis": "10500.00",
+            "quantity": "825.05731354",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "12.72638861286931002458804045"
+          },
+          {
+            "asset": "SOL",
+            "cost_basis": "25180.71",
+            "quantity": "8.85054300",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "2845.103402130242178361259868"
+          },
+          {
+            "asset": "UNI",
+            "cost_basis": "30000.00",
+            "quantity": "278.38804468",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "107.7632483624942999114713276"
+          },
+          {
+            "asset": "USDC",
+            "cost_basis": "1670.349703888851358958769619",
+            "quantity": "100",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "16.70349703888851358958769619"
+          },
+          {
+            "asset": "XRP",
+            "cost_basis": "5600.00",
+            "quantity": "104.35098000",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "53.66504464069240173882411071"
+          }
+        ]
+      },
+      "solaxy wallet": {
+        "assets_held": 1,
+        "cost_basis_total": "104029.9557195076835275483401",
+        "holdings": {
+          "SOLX": "3704848.73"
+        },
+        "invested": {},
+        "net_flow": {},
+        "positions": [
+          {
+            "asset": "SOLX",
+            "cost_basis": "104029.9557195076835275483401",
+            "quantity": "3704848.73",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "0.02807940709619949409582192040"
+          }
+        ]
+      },
+      "tresor": {
+        "assets_held": 1,
+        "cost_basis_total": "51901.10755700699906520783888",
+        "holdings": {
+          "BTC": "0.02411566"
+        },
+        "invested": {},
+        "net_flow": {},
+        "positions": [
+          {
+            "asset": "BTC",
+            "cost_basis": "51901.10755700699906520783888",
+            "quantity": "0.02411566",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "2152174.460786352066052010970"
+          }
+        ]
+      },
+      "trust wallet": {
+        "assets_held": 1,
+        "cost_basis_total": "333.0758655079242454425509",
+        "holdings": {
+          "ETH": "0.00495976"
+        },
+        "invested": {},
+        "net_flow": {},
+        "positions": [
+          {
+            "asset": "ETH",
+            "cost_basis": "333.0758655079242454425509",
+            "quantity": "0.00495976",
+            "realized_pnl": "0",
+            "roi_realized": "0.00",
+            "wac": "67155.64170603501892078465490"
+          }
+        ]
+      }
+    },
+    "invested": {
+      "CZK": "1548667.075206691558740000000"
+    },
+    "net_flow": {
+      "CZK": "-1545397.825206691558740000000"
+    },
+    "positions": [
+      {
+        "asset": "AAVE",
+        "cost_basis": "30803.564042",
+        "quantity": "10.69850764",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "2879.239336786602509730974030"
+      },
+      {
+        "asset": "ARB",
+        "cost_basis": "30177.99999980676200000000000",
+        "quantity": "6322.76881815",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "4.772908968801526352861786864"
+      },
+      {
+        "asset": "ATOM",
+        "cost_basis": "94999.999999955560",
+        "quantity": "1169.95871867",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "81.19944617187076772126466229"
+      },
+      {
+        "asset": "AVAX",
+        "cost_basis": "30000.00",
+        "quantity": "78.52237806",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "382.0566918780350550172830565"
+      },
+      {
+        "asset": "B3",
+        "cost_basis": "3168.51519972307277",
+        "quantity": "48416.85563",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "0.06544239931516330834473068816"
+      },
+      {
+        "asset": "BTC",
+        "cost_basis": "76153.19304739476430604419660",
+        "quantity": "0.04076323",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "1868183.484169305629265497278"
+      },
+      {
+        "asset": "DOGE",
+        "cost_basis": "42694.54618592665640300694882",
+        "quantity": "9679.92556595",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "4.410627529627761166556095900"
+      },
+      {
+        "asset": "DOT",
+        "cost_basis": "157783.0021252960286",
+        "quantity": "1268.89214154",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "124.3470559552851847824203682"
+      },
+      {
+        "asset": "DYDX",
+        "cost_basis": "100207.2803229547859",
+        "quantity": "7895.36616378",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "12.69191045029118249252917868"
+      },
+      {
+        "asset": "ENA",
+        "cost_basis": "4823.00",
+        "quantity": "2060.39921792",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "2.340808498689337339816029277"
+      },
+      {
+        "asset": "ETH",
+        "cost_basis": "83979.8957396079242454425509",
+        "quantity": "1.918869329",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "43765.30202990592708850501977"
+      },
+      {
+        "asset": "FET",
+        "cost_basis": "38977.57999989442850000000000",
+        "quantity": "6287.43935127",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "6.199277292753741845351199747"
+      },
+      {
+        "asset": "GRT",
+        "cost_basis": "14911.479999512462",
+        "quantity": "10377.10764839",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "1.436959170586031866465557125"
+      },
+      {
+        "asset": "HYPE",
+        "cost_basis": "8238.266599860814293166960358",
+        "quantity": "5.993712",
+        "realized_pnl": "520.280213042997630461069748",
+        "roi_realized": "6.32",
+        "wac": "1374.484893478501184769465126"
+      },
+      {
+        "asset": "INJ",
+        "cost_basis": "15510.28327001640413603776461",
+        "quantity": "143.29408874",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "108.2409149351515959543675215"
+      },
+      {
+        "asset": "LINK",
+        "cost_basis": "21247.00",
+        "quantity": "82.55126815",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "257.3794500817732138013194168"
+      },
+      {
+        "asset": "MON",
+        "cost_basis": "2436.50",
+        "quantity": "3466.03336028",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "0.7029649592879769083928743449"
+      },
+      {
+        "asset": "MORPHO",
+        "cost_basis": "2585.24",
+        "quantity": "51.217",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "50.47620907120682585860163618"
+      },
+      {
+        "asset": "NEAR",
+        "cost_basis": "15925.67473279927749325827176",
+        "quantity": "334.53310352",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "47.60567658395326476735121212"
+      },
+      {
+        "asset": "ONDO",
+        "cost_basis": "49584.73477633933727",
+        "quantity": "5210.88689577",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "9.515603728914235510140743260"
+      },
+      {
+        "asset": "PENGU",
+        "cost_basis": "7244.047097174853475187231019",
+        "quantity": "41390.606389",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "0.1750166941042940871321582275"
+      },
+      {
+        "asset": "RENDER",
+        "cost_basis": "13143.17454555541075716289247",
+        "quantity": "357.2804366",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "36.78671765694828071412766649"
+      },
+      {
+        "asset": "RUNE",
+        "cost_basis": "100752.999999966457",
+        "quantity": "3069.10519235",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "32.82813513564204015804398207"
+      },
+      {
+        "asset": "SOL",
+        "cost_basis": "43230.3131319999972",
+        "quantity": "17.02394204",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "2539.383242167100164774762121"
+      },
+      {
+        "asset": "SOLX",
+        "cost_basis": "104029.9557195076835275483401",
+        "quantity": "3704848.73",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "0.02807940709619949409582192040"
+      },
+      {
+        "asset": "TAO",
+        "cost_basis": "8943.9002208",
+        "quantity": "1.543329",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "5795.2"
+      },
+      {
+        "asset": "TICS",
+        "cost_basis": "134246.0541718231852190879683",
+        "quantity": "72425.00",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "1.853587216732111635748539431"
+      },
+      {
+        "asset": "TON",
+        "cost_basis": "4867.00",
+        "quantity": "124.79676253",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "38.99940912994451860160766945"
+      },
+      {
+        "asset": "UNI",
+        "cost_basis": "174075.8384375787980000000000",
+        "quantity": "1468.64053558",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "118.5285535979246527559609414"
+      },
+      {
+        "asset": "USDC",
+        "cost_basis": "2580.803565943787605628745833",
+        "quantity": "153.671047",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "16.79433840223518230879721821"
+      },
+      {
+        "asset": "WOO",
+        "cost_basis": "112101.1494611684435535437180",
+        "quantity": "60501.27682432",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "1.852872457331455613036627972"
+      },
+      {
+        "asset": "XLM",
+        "cost_basis": "3358.839801845288751356811039",
+        "quantity": "905.293800",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "3.710220706079384119671217277"
+      },
+      {
+        "asset": "XRP",
+        "cost_basis": "12931.50000000000000000000000",
+        "quantity": "349.17098000",
+        "realized_pnl": "0",
+        "roi_realized": "0.00",
+        "wac": "37.03486469580032109197620031"
+      }
+    ],
+    "realized_roi": "0.03",
+    "top_position": {
+      "asset": "UNI",
+      "cost_basis": "174075.8384375787980000000000"
+    }
+  }
+}

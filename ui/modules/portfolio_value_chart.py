@@ -1,18 +1,25 @@
-"""Portfolio Value Trend — a minimal reusable flet.canvas line chart.
+"""Portfolio Value / PnL / ROI Trend — a minimal reusable flet.canvas line chart.
 
 Public API:
-    build_portfolio_value_chart(trend_points, date_from, date_to, width, height) -> ft.Control
+    build_portfolio_value_chart(trend_points, date_from, date_to, width, height, metric) -> ft.Control
+
+    metric: "value" (Portfolio Value, CZK) | "pnl" (Unrealized PnL, CZK) |
+            "roi" (ROI, %). All three read straight from the SAME
+            PortfolioValueTrendPointDTO fields already computed by
+            core.services.portfolio_history_service.get_portfolio_value_trend()
+            — this module never computes value/PnL/ROI itself, only picks
+            which already-computed field to plot and how to format it.
 
 No data fetching or portfolio computation happens here — the caller
-passes an already-fetched List[PortfolioValueTrendPointDTO] (from
-core.services.ui_facade.get_portfolio_value_trend()). This module only
-turns that DTO list into pixels.
+passes an already-fetched List[PortfolioValueTrendPointDTO]. This module
+only turns that DTO list into pixels.
 
 Flet 0.80.5 has no built-in chart widget (confirmed during the Etapa 1
 spike — grep for "class.*Chart" across the installed package returns
 zero matches). flet.canvas (Line/Circle/Text + Paint) is the lowest-
 level drawing primitive available, so this is a hand-built line chart,
-not a general chart framework — just what this one chart needs.
+not a general chart framework — just what this one chart (in two/three
+metric variants) needs.
 
 compute_chart_layout() is a pure, Flet-free function (dataclasses +
 Decimal math only) so the pixel-layout logic is unit-testable without a
@@ -23,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import flet as ft
 import flet.canvas as cv
@@ -34,6 +41,7 @@ BORDER    = "#1e293b"
 T_PRI     = "#e2e8f0"
 T_MUT     = "#7b8799"
 GRID      = "#1f2a3a"
+ZERO_LINE = "#3a4a63"   # slightly brighter than GRID — a zero-crossing reference, not just a tick
 LINE_COLOR = "#1d4ed8"   # BLUE — backfill (historical, daily CoinGecko price) line
 LIVE_COLOR = "#f59e0b"   # distinct accent — live snapshot point + its connector
 
@@ -43,6 +51,50 @@ _PAD_TOP = 16
 _PAD_BOTTOM = 26
 _MAX_X_LABELS = 6
 _Y_RANGE_PADDING_FRACTION = Decimal("0.08")  # 8% breathing room above max / below min
+
+
+# ── Formatters ────────────────────────────────────────────────────────────────
+
+def _fmt_czk_axis(v: Decimal, signed: bool = False) -> str:
+    """Compact CZK tick label, e.g. '1.02 M' / '891 k' / '320' (optionally signed)."""
+    sign = "-" if v < 0 else ("+" if signed else "")
+    av = abs(v)
+    if av >= Decimal("1000000"):
+        return f"{sign}{av / Decimal('1000000'):.2f} M"
+    if av >= Decimal("1000"):
+        return f"{sign}{av / Decimal('1000'):.0f} k"
+    return f"{sign}{av:.0f}"
+
+
+def _fmt_czk(v: Decimal, signed: bool = False) -> str:
+    """Full-precision CZK label for the live marker's value callout —
+    deliberately NOT compacted, unlike the Y-axis ticks."""
+    sign = "-" if v < 0 else ("+" if signed else "")
+    return f"{sign}{abs(v):,.0f}".replace(",", " ") + " CZK"
+
+
+def _fmt_pct_axis(v: Decimal) -> str:
+    """Compact % tick label, e.g. '+12.3%' / '-27.9%' — always signed,
+    ROI is meaningless without knowing the direction."""
+    return f"{'+' if v >= 0 else ''}{float(v) * 100:.1f}%"
+
+
+def _fmt_pct(v: Decimal) -> str:
+    return f"{'+' if v >= 0 else ''}{float(v) * 100:.2f}%"
+
+
+@dataclass(frozen=True)
+class _MetricConfig:
+    attr: str  # PortfolioValueTrendPointDTO field name to plot
+    axis_fmt: Callable[[Decimal], str]
+    label_fmt: Callable[[Decimal], str]
+
+
+_METRICS: Dict[str, _MetricConfig] = {
+    "value": _MetricConfig("portfolio_value", _fmt_czk_axis, _fmt_czk),
+    "pnl":   _MetricConfig("unrealized_pnl", lambda v: _fmt_czk_axis(v, signed=True), lambda v: _fmt_czk(v, signed=True)),
+    "roi":   _MetricConfig("roi_total", _fmt_pct_axis, _fmt_pct),
+}
 
 
 @dataclass
@@ -65,23 +117,8 @@ class ChartLayout:
     y_max: Decimal
     x_labels: List[Tuple[float, str]]
     y_labels: List[Tuple[float, str]]
-
-
-def _fmt_czk_axis(v: Decimal) -> str:
-    """Compact Y-axis tick label, e.g. '1.02 M' / '891 k' / '320'."""
-    sign = "-" if v < 0 else ""
-    av = abs(v)
-    if av >= Decimal("1000000"):
-        return f"{sign}{av / Decimal('1000000'):.2f} M"
-    if av >= Decimal("1000"):
-        return f"{sign}{av / Decimal('1000'):.0f} k"
-    return f"{sign}{av:.0f}"
-
-
-def _fmt_czk(v: Decimal) -> str:
-    """Full-precision CZK label for the live marker's value callout —
-    deliberately NOT compacted, unlike the Y-axis ticks (see _fmt_czk_axis)."""
-    return f"{v:,.0f}".replace(",", " ") + " CZK"
+    zero_y: Optional[float]                 # pixel y of the 0 line, only when y_min < 0 < y_max
+    label_fmt: Callable[[Decimal], str]      # full-precision formatter for the live marker callout
 
 
 def compute_chart_layout(
@@ -90,21 +127,27 @@ def compute_chart_layout(
     date_to: date,
     width: float,
     height: float,
+    metric: str = "value",
 ) -> Optional[ChartLayout]:
-    """Pure layout computation. Returns None when there is nothing
-    plottable (caller renders the "No portfolio history available yet."
-    placeholder instead).
+    """Pure layout computation for *metric* ("value" | "pnl" | "roi").
+    Returns None when there is nothing plottable (caller renders the
+    "No portfolio history available yet." placeholder instead).
 
-    Points whose portfolio_value is None are skipped entirely — never
+    Points whose selected field is None are skipped entirely — never
     plotted as 0 (per the data contract: missing data stays missing).
     The X axis is time-proportional across [date_from, date_to] so an
-    irregular gap in the middle does not distort spacing.
+    irregular gap in the middle does not distort spacing. The Y axis is
+    never clamped to include 0 as a floor — but if the data itself spans
+    both sides of 0 (e.g. PnL moving from loss to profit), 0 naturally
+    falls inside [y_min, y_max] and is marked with a reference line.
     """
-    plottable = [p for p in trend_points if p.portfolio_value is not None]
+    cfg = _METRICS[metric]
+    plottable = [(p, getattr(p, cfg.attr)) for p in trend_points]
+    plottable = [(p, v) for p, v in plottable if v is not None]
     if not plottable:
         return None
 
-    values = [p.portfolio_value for p in plottable]
+    values = [v for _, v in plottable]
     y_min_raw, y_max_raw = min(values), max(values)
     if y_min_raw == y_max_raw:
         # Flat series or a single point — fabricate a small range so the
@@ -120,15 +163,15 @@ def compute_chart_layout(
     total_days = max((date_to - date_from).days, 1)
     y_span = y_max - y_min
 
-    def to_xy(p) -> _PlottedPoint:
+    def to_xy(p, v: Decimal) -> _PlottedPoint:
         x = _PAD_LEFT + (p.date - date_from).days / total_days * plot_w
-        frac = float((p.portfolio_value - y_min) / y_span)
+        frac = float((v - y_min) / y_span)
         y = _PAD_TOP + (1 - frac) * plot_h
-        return _PlottedPoint(x=x, y=y, date=p.date, value=p.portfolio_value, source=p.source)
+        return _PlottedPoint(x=x, y=y, date=p.date, value=v, source=p.source)
 
-    plotted = [to_xy(p) for p in plottable]
+    plotted = [to_xy(p, v) for p, v in plottable]
 
-    live_point = plotted[-1] if plottable[-1].source == "live_snapshot" else None
+    live_point = plotted[-1] if plottable[-1][0].source == "live_snapshot" else None
     last_backfill = plotted[-2] if (live_point is not None and len(plotted) >= 2) else None
 
     n = len(plotted)
@@ -139,14 +182,20 @@ def compute_chart_layout(
     x_labels = [(plotted[i].x, plotted[i].date.strftime("%d.%m")) for i in idxs]
 
     y_labels = [
-        (_PAD_TOP, _fmt_czk_axis(y_max)),
-        (_PAD_TOP + plot_h / 2, _fmt_czk_axis((y_max + y_min) / 2)),
-        (_PAD_TOP + plot_h, _fmt_czk_axis(y_min)),
+        (_PAD_TOP, cfg.axis_fmt(y_max)),
+        (_PAD_TOP + plot_h / 2, cfg.axis_fmt((y_max + y_min) / 2)),
+        (_PAD_TOP + plot_h, cfg.axis_fmt(y_min)),
     ]
+
+    zero_y = None
+    if y_min < Decimal("0") < y_max:
+        zero_frac = float((Decimal("0") - y_min) / y_span)
+        zero_y = _PAD_TOP + (1 - zero_frac) * plot_h
 
     return ChartLayout(
         points=plotted, last_backfill=last_backfill, live_point=live_point,
         y_min=y_min, y_max=y_max, x_labels=x_labels, y_labels=y_labels,
+        zero_y=zero_y, label_fmt=cfg.label_fmt,
     )
 
 
@@ -159,6 +208,15 @@ def _build_canvas(layout: ChartLayout, width: float, height: float) -> ft.Contro
             _PAD_LEFT, y_px, width - _PAD_RIGHT, y_px,
             paint=ft.Paint(color=GRID, stroke_width=1),
         ))
+
+    # Zero-crossing reference line — only when the data actually spans
+    # both sides of 0 (never forced); visually distinct from the plain grid.
+    if layout.zero_y is not None:
+        shapes.append(cv.Line(
+            _PAD_LEFT, layout.zero_y, width - _PAD_RIGHT, layout.zero_y,
+            paint=ft.Paint(color=ZERO_LINE, stroke_width=1),
+        ))
+        shapes.append(cv.Text(2, layout.zero_y - 6, "0", style=ft.TextStyle(size=10, color=T_MUT)))
 
     # Solid backfill line — everything except the final dashed live segment
     line_points = layout.points[:-1] if layout.live_point is not None else layout.points
@@ -188,7 +246,7 @@ def _build_canvas(layout: ChartLayout, width: float, height: float) -> ft.Contro
         shapes.append(cv.Circle(lp.x, lp.y, 5, paint=ft.Paint(color=LIVE_COLOR, style=ft.PaintingStyle.FILL)))
         label_x = max(_PAD_LEFT, min(lp.x - 50, width - _PAD_RIGHT - 100))
         shapes.append(cv.Text(
-            label_x, max(lp.y - 22, 2), _fmt_czk(lp.value),
+            label_x, max(lp.y - 22, 2), layout.label_fmt(lp.value),
             style=ft.TextStyle(size=11, color=LIVE_COLOR, weight=ft.FontWeight.W_600),
         ))
 
@@ -210,10 +268,12 @@ def build_portfolio_value_chart(
     date_to: date,
     width: float = 880,
     height: float = 280,
+    metric: str = "value",
 ) -> ft.Control:
     """Build the full chart control (or a placeholder) for the given
-    already-fetched trend points. Never raises on empty/sparse data."""
-    layout = compute_chart_layout(trend_points, date_from, date_to, width, height)
+    already-fetched trend points and *metric*. Never raises on empty/
+    sparse data."""
+    layout = compute_chart_layout(trend_points, date_from, date_to, width, height, metric=metric)
     if layout is None:
         return ft.Container(
             content=ft.Text("No portfolio history available yet.", size=13, color=T_MUT),

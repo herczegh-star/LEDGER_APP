@@ -23,10 +23,11 @@ from typing import Optional
 import flet as ft
 
 from core.services.ui_facade import (
-    get_dashboard_snapshot, get_earliest_ledger_date, get_portfolio_value_trend,
-    run_sell_simulation,
+    get_dashboard_snapshot, get_earliest_ledger_date, get_portfolio_contributors,
+    get_portfolio_value_trend, run_sell_simulation,
 )
 from ui.modules.portfolio_value_chart import build_portfolio_value_chart
+from core.asset_display import display_asset
 
 # ── Color palette (mirrors app_flet.py) ─────────────────────────────────────
 BG        = "#0b0f14"
@@ -47,6 +48,12 @@ _MODES = [
     ("profitable_only", "Profitable Only"),
     ("loss_only",       "Loss Only"),
 ]
+
+_PNL_ROI_METRICS = [
+    ("pnl", "PnL CZK"),
+    ("roi", "ROI %"),
+]
+_DEFAULT_PNL_ROI_METRIC = "pnl"
 
 # (period key, trailing day count; None = "since the ledger's earliest row")
 _TREND_PERIODS = [
@@ -124,13 +131,23 @@ def build_analysis_view(
         text_size=13,
     )
     trend_chart_container = ft.Container()
+    # Shared period state for BOTH Portfolio Value Trend and PnL/ROI Trend —
+    # a period change re-fetches once and redraws both charts; a metric
+    # change (PnL CZK <-> ROI %) only re-renders the second chart from this
+    # already-fetched cache, no extra get_portfolio_value_trend() call.
+    trend_state = {"points": [], "date_from": None, "date_to": None}
 
     def _load_trend(e=None) -> None:
         period = period_dd.value or _DEFAULT_TREND_PERIOD
         earliest = get_earliest_ledger_date(db_path)
         date_from, date_to = _trend_period_range(period, earliest)
         trend_points = get_portfolio_value_trend(db_path, date_from, date_to)
-        trend_chart_container.content = build_portfolio_value_chart(trend_points, date_from, date_to)
+        trend_state["points"] = trend_points
+        trend_state["date_from"] = date_from
+        trend_state["date_to"] = date_to
+        trend_chart_container.content = build_portfolio_value_chart(trend_points, date_from, date_to, metric="value")
+        _render_pnl_roi_chart()
+        _render_contributors()
         page.update()
 
     period_dd.on_select = _load_trend  # ft.Dropdown fires on_select, not on_change (Flet 0.80.5)
@@ -160,6 +177,120 @@ def build_analysis_view(
                 color=T_MUT,
                 italic=True,
             ),
+        ],
+        spacing=4,
+    )
+
+    # ── PnL / ROI Trend (shares period_dd / trend_state with the section above) ─
+    metric_dd = ft.Dropdown(
+        label="Metric",
+        options=[ft.dropdown.Option(k, v) for k, v in _PNL_ROI_METRICS],
+        value=_DEFAULT_PNL_ROI_METRIC,
+        width=150,
+        text_size=13,
+    )
+    pnl_roi_chart_container = ft.Container()
+
+    def _render_pnl_roi_chart() -> None:
+        metric = metric_dd.value or _DEFAULT_PNL_ROI_METRIC
+        pnl_roi_chart_container.content = build_portfolio_value_chart(
+            trend_state["points"], trend_state["date_from"], trend_state["date_to"], metric=metric,
+        )
+
+    def _on_metric_change(e=None) -> None:
+        _render_pnl_roi_chart()
+        page.update()
+
+    metric_dd.on_select = _on_metric_change  # re-render only — reuses trend_state, no new fetch
+
+    pnl_roi_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    ft.Text("PnL / ROI Trend", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+                    metric_dd,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            ft.Container(height=8),
+            ft.Container(
+                content=pnl_roi_chart_container,
+                bgcolor=BG_CARD,
+                border=ft.border.all(1, BORDER),
+                border_radius=10,
+                padding=16,
+            ),
+        ],
+        spacing=4,
+    )
+
+    # ── Portfolio Contributors (shares period_dd / trend_state) ─────────────────
+    contributors_top_col = ft.Column(spacing=8)
+    contributors_worst_col = ft.Column(spacing=8)
+    contributors_note = ft.Text("", size=10, color=T_MUT, italic=True, visible=False)
+
+    def _contributor_row(c) -> ft.Row:
+        color = GREEN if c.contribution_czk >= 0 else RED
+        return ft.Row(
+            [
+                ft.Text(display_asset(c.asset), size=13, color=T_PRI, weight=ft.FontWeight.W_600),
+                ft.Text(_czk(c.contribution_czk, sign=True), size=13, color=color, weight=ft.FontWeight.W_600),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+
+    def _render_contributors() -> None:
+        date_from, date_to = trend_state["date_from"], trend_state["date_to"]
+        if date_from is None:
+            return
+        contributors = get_portfolio_contributors(db_path, date_from, date_to)
+        valid = [c for c in contributors if c.contribution_czk is not None]
+        excluded = sorted(c.asset for c in contributors if c.contribution_czk is None)
+
+        top5 = sorted(valid, key=lambda c: c.contribution_czk, reverse=True)[:5]
+        worst5 = sorted(valid, key=lambda c: c.contribution_czk)[:5]
+
+        no_data = ft.Text("No data available.", size=12, color=T_MUT)
+        contributors_top_col.controls = [_contributor_row(c) for c in top5] if top5 else [no_data]
+        contributors_worst_col.controls = [_contributor_row(c) for c in worst5] if worst5 else [no_data]
+
+        if excluded:
+            contributors_note.value = f"Excluded due to missing historical price: {', '.join(excluded)}"
+            contributors_note.visible = True
+        else:
+            contributors_note.visible = False
+
+    def _contributors_card(title: str, col: ft.Column) -> ft.Container:
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(title, size=14, weight=ft.FontWeight.W_600, color=T_PRI),
+                    ft.Container(height=8),
+                    col,
+                ],
+                spacing=0,
+            ),
+            bgcolor=BG_CARD,
+            border=ft.border.all(1, BORDER),
+            border_radius=10,
+            padding=16,
+            expand=True,
+        )
+
+    contributors_section = ft.Column(
+        [
+            ft.Text("Portfolio Contributors", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+            ft.Container(height=8),
+            ft.Row(
+                [
+                    _contributors_card("Top Contributors", contributors_top_col),
+                    ft.Container(width=16),
+                    _contributors_card("Worst Contributors", contributors_worst_col),
+                ],
+            ),
+            ft.Container(height=4),
+            contributors_note,
         ],
         spacing=4,
     )
@@ -251,7 +382,7 @@ def build_analysis_view(
         hdr = lambda t: ft.Text(t, size=11, color=T_MUT)
         table_rows = [
             ft.DataRow(cells=[
-                ft.DataCell(ft.Text(r.asset, size=13, color=T_PRI,
+                ft.DataCell(ft.Text(display_asset(r.asset), size=13, color=T_PRI,
                                     weight=ft.FontWeight.W_600)),
                 ft.DataCell(ft.Text(_amt(r.quantity, r.asset), size=12, color=T_PRI)),
                 ft.DataCell(ft.Text(_czk(r.wac), size=12, color=T_MUT)),
@@ -332,6 +463,10 @@ def build_analysis_view(
     scroll_col = ft.Column(
         [
             trend_section,
+            ft.Container(height=28),
+            pnl_roi_section,
+            ft.Container(height=28),
+            contributors_section,
             ft.Container(height=28),
             ft.Divider(height=1, color=BORDER),
             ft.Container(height=20),

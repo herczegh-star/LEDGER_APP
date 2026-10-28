@@ -1855,3 +1855,12 @@ def get_earliest_ledger_date(db_path: str):
     if not rows:
         return None
     return min(r.timestamp for r in rows).date()
+
+
+def get_portfolio_contributors(db_path: str, date_from, date_to):
+    """Thin delegate to core.services.portfolio_history_service.
+    get_portfolio_contributors() — see its docstring. Returns
+    List[ContributorDTO], ready for a UI to rank into Top/Worst without
+    recomputing anything itself."""
+    from core.services.portfolio_history_service import get_portfolio_contributors as _contributors
+    return _contributors(db_path, date_from, date_to)

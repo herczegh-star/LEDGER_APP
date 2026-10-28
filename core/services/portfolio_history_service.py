@@ -26,6 +26,18 @@ Two responsibilities:
                                       distinguish the two (see the spike's
                                       point 10 — not implemented here).
 
+  get_portfolio_contributors()     — read: per-asset CZK impact on the
+                                      portfolio over [date_from, date_to],
+                                      i.e. "which positions actually
+                                      dragged the portfolio up or down" —
+                                      see get_portfolio_contributors()'s
+                                      own docstring for the formula and
+                                      how the asset->asset SWAP case is
+                                      handled via compute_positions()'s
+                                      capture_cost_transfer output param
+                                      (core/reports/positions.py) rather
+                                      than a second accounting engine.
+
 IMPORTANT — intentional duplication, not a new engine:
     The Dashboard's headline Portfolio Value / Unrealized PnL / ROI
     formula (pnl = sum(value) - sum(cost_basis); roi = pnl / cost_basis)
@@ -57,7 +69,7 @@ from core.portfolio_snapshot_store import (
     PortfolioSnapshotSchemaNotInitializedError,
     PortfolioSnapshotStore,
 )
-from core.reports.positions import compute_positions
+from core.reports.positions import _INVESTMENT_TYPES, compute_positions
 
 logger = logging.getLogger(__name__)
 
@@ -287,3 +299,218 @@ def _reconstruct_backfill_point(
         date=d, portfolio_value=tv, cost_basis=total_cost,
         unrealized_pnl=pnl, roi_total=roi, source="backfill",
     )
+
+
+# ── Read: Portfolio Contributors ─────────────────────────────────────────────
+
+@dataclass
+class ContributorDTO:
+    """One asset's CZK impact on the portfolio over [date_from, date_to].
+
+    contribution_czk is None (never 0) when value_start or value_end could
+    not be determined (asset held but no cached price that day) — the UI
+    must exclude such assets from any Top/Worst ranking, never treat None
+    as "no impact". value_start/value_end are Decimal("0") (a real fact,
+    not missing data) when the asset simply wasn't held on that date —
+    see get_portfolio_contributors()'s docstring for the full contract.
+    """
+
+    asset: str
+    contribution_czk: Optional[Decimal]
+    value_start: Optional[Decimal]
+    value_end: Optional[Decimal]
+    start_source: str  # "backfill" | "live_snapshot"
+    end_source: str    # "backfill" | "live_snapshot"
+
+
+def _per_asset_values_at(
+    rows_up_to_d: List,
+    price_store: Optional[HistoricalPriceStore],
+    snapshot_store: Optional[PortfolioSnapshotStore],
+    d: date,
+) -> Tuple[Dict[str, Optional[Decimal]], str]:
+    """Per-asset value at the end of day *d*, plus where it came from.
+
+    Returns ({asset: value_or_None}, source). An asset simply absent from
+    the returned dict means "not held that day" — callers must default
+    that to Decimal("0") themselves (a real fact), NOT treat it the same
+    as a dict value of None (which means "held but unpriced").
+
+    Prefers an exact saved live snapshot for calendar day *d* (per-asset
+    detail already stored in portfolio_snapshot_positions — see
+    core/portfolio_snapshot_store.py); otherwise reconstructs from
+    *rows_up_to_d* (must already be filtered to timestamp <= end of *d*
+    by the caller) via compute_positions() + historical_prices, exactly
+    like _reconstruct_backfill_point() above, just keeping the per-asset
+    breakdown instead of collapsing it to a headline aggregate.
+    """
+    if snapshot_store is not None:
+        day_start = datetime.combine(d, time.min)
+        day_end = datetime.combine(d, time.max)
+        snapshots = snapshot_store.get_snapshots(time_from=day_start, time_to=day_end)
+        if snapshots:
+            rec = snapshots[-1]  # last snapshot of the day wins — same rule as get_portfolio_value_trend()
+            return {p.asset: p.value for p in rec.positions}, "live_snapshot"
+
+    raw_positions = compute_positions(rows_up_to_d, _FIAT_DEFAULT)
+    values: Dict[str, Optional[Decimal]] = {}
+    for pos in raw_positions:
+        if pos.quantity == _ZERO:
+            continue  # not held -> absent from dict, caller defaults to 0
+        price = price_store.get_price(pos.asset, d) if price_store is not None else None
+        values[pos.asset] = (pos.quantity * price.price_czk) if price is not None else None
+    return values, "backfill"
+
+
+def _net_capital_flow_by_asset(
+    window_rows: List,
+    cost_transfer: Dict[str, Decimal],
+) -> Dict[str, Decimal]:
+    """{asset: net capital that flowed INTO the asset during window_rows}.
+
+    Mirrors compute_positions()'s own cost/proceeds/fee accounting exactly
+    (same fiat_by_id indexing technique, same BUY-adds-fee /
+    SELL-nets-fee convention) so a contribution computed from this never
+    silently diverges from what compute_positions() would say the
+    realized/unrealized split "should" be. Three capital-flow sources,
+    all using the SAME sign convention (positive = capital added to the
+    asset):
+
+      - BUY:  +(fiat paid + fee)
+      - SELL: -(fiat received - fee)
+      - asset->asset SWAP: +/-cost_transfer[trade_id] (see
+        core/reports/positions.py's compute_positions(
+        capture_cost_transfer=...) — the EXACT same WAC-based swap cost
+        compute_positions() already computes internally, read out via its
+        new optional output parameter, never recomputed here).
+
+    STAKING rewards and non-fiat network FEE rows contribute 0 capital
+    flow by design — a free token's entire value is genuine "performance"
+    (no capital was added), and a non-fiat fee's cost is a real loss that
+    shows up naturally via (value_end - value_start) instead.
+    """
+    fiat_by_id: Dict[str, Decimal] = {}
+    fee_by_id: Dict[str, Decimal] = {}
+    for row in window_rows:
+        asset = row.asset.upper()
+        if asset not in _FIAT_DEFAULT:
+            continue
+        if row.type in _INVESTMENT_TYPES:
+            fiat_by_id[row.id] = row.amount
+        elif row.type == "FEE":
+            fee_by_id[row.id] = fee_by_id.get(row.id, _ZERO) + abs(row.amount)
+
+    by_trade: Dict[str, List] = {}
+    for row in window_rows:
+        asset = row.asset.upper()
+        if asset in _FIAT_DEFAULT or row.type not in _INVESTMENT_TYPES:
+            continue
+        by_trade.setdefault(row.id, []).append(row)
+
+    flow: Dict[str, Decimal] = {}
+    for trade_id, legs in by_trade.items():
+        fiat_amount = fiat_by_id.get(trade_id)
+        for leg in legs:
+            asset = leg.asset.upper()
+            flow.setdefault(asset, _ZERO)
+            if leg.amount > 0:
+                if fiat_amount is not None:
+                    flow[asset] += abs(fiat_amount) + fee_by_id.get(trade_id, _ZERO)
+                elif trade_id in cost_transfer:
+                    flow[asset] += cost_transfer[trade_id]
+                # else: STAKING / unknown-cost inflow -> 0 capital flow (by design)
+            else:
+                if fiat_amount is not None:
+                    flow[asset] -= abs(fiat_amount) - fee_by_id.get(trade_id, _ZERO)
+                elif trade_id in cost_transfer:
+                    flow[asset] -= cost_transfer[trade_id]
+    return flow
+
+
+def get_portfolio_contributors(
+    db_path: str,
+    date_from: date,
+    date_to: date,
+) -> List[ContributorDTO]:
+    """Per-asset CZK impact on the headline portfolio over [date_from,
+    date_to] — "which positions actually dragged the portfolio up or
+    down", not percentage price moves. PRESALE_ASSETS are excluded,
+    matching the headline scope of get_portfolio_value_trend() /
+    maybe_save_portfolio_snapshot() (Contributors explains THAT trend).
+
+        contribution_i = (value_end_i - value_start_i) - net_capital_flow_into_i
+
+    value_start_i / value_end_i are the asset's value at the END of
+    date_from / date_to respectively (Decimal("0") when not held that
+    day — a real fact; None when held but unpriced — missing data).
+    net_capital_flow_into_i covers BUY/SELL fiat AND asset->asset SWAP
+    capital transfer (see _net_capital_flow_by_asset()'s docstring) —
+    NOT a new accounting engine, just compute_positions()'s own
+    cost/proceeds/fee/swap-cost logic re-read for a bounded window.
+
+    Never raises. An asset whose value_start or value_end could not be
+    determined gets contribution_czk=None — callers (UI) must exclude it
+    from any ranking, never substitute 0. Returns ALL candidate assets
+    (including the None-contribution ones) so the caller can both exclude
+    them from Top/Worst AND name them in a "missing price" disclosure —
+    this service never decides UI presentation.
+    """
+    if date_from > date_to:
+        raise ValueError(f"date_from ({date_from}) must be <= date_to ({date_to})")
+
+    from core.services.ui_facade import PRESALE_ASSETS
+
+    price_store = HistoricalPriceStore(db_path, read_only=True)
+    price_schema_ok = price_store.schema_exists()
+
+    try:
+        snap_store = PortfolioSnapshotStore(db_path, read_only=True)
+        snap_schema_ok = snap_store.schema_exists()
+    except Exception:
+        snap_store, snap_schema_ok = None, False
+
+    ledger_store = LedgerStore(db_path)
+    try:
+        end_cutoff = datetime.combine(date_to, time.max)
+        start_cutoff = datetime.combine(date_from, time.max)
+        all_rows = ledger_store.timeline_filtered(time_to=end_cutoff)
+        rows_at_start = [r for r in all_rows if r.timestamp <= start_cutoff]
+
+        snap_store_arg = snap_store if snap_schema_ok else None
+        price_store_arg = price_store if price_schema_ok else None
+
+        start_values, start_source = _per_asset_values_at(rows_at_start, price_store_arg, snap_store_arg, date_from)
+        end_values, end_source = _per_asset_values_at(all_rows, price_store_arg, snap_store_arg, date_to)
+
+        cost_transfer: Dict[str, Decimal] = {}
+        compute_positions(all_rows, _FIAT_DEFAULT, capture_cost_transfer=cost_transfer)
+
+        window_rows = [r for r in all_rows if start_cutoff < r.timestamp <= end_cutoff]
+        flow = _net_capital_flow_by_asset(window_rows, cost_transfer)
+
+        assets = (set(start_values) | set(end_values) | set(flow)) - PRESALE_ASSETS
+
+        contributors: List[ContributorDTO] = []
+        for asset in sorted(assets):
+            v_start = start_values.get(asset, _ZERO)
+            v_end = end_values.get(asset, _ZERO)
+            if v_start is None or v_end is None:
+                contributors.append(ContributorDTO(
+                    asset=asset, contribution_czk=None,
+                    value_start=v_start, value_end=v_end,
+                    start_source=start_source, end_source=end_source,
+                ))
+                continue
+            net_flow = flow.get(asset, _ZERO)
+            contribution = (v_end - v_start) - net_flow
+            contributors.append(ContributorDTO(
+                asset=asset, contribution_czk=contribution,
+                value_start=v_start, value_end=v_end,
+                start_source=start_source, end_source=end_source,
+            ))
+        return contributors
+    finally:
+        ledger_store.close()
+        price_store.close()
+        if snap_store is not None:
+            snap_store.close()

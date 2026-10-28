@@ -33,6 +33,7 @@ from core.services.ui_facade import (
 from ui.modules.asset_note_dialog import open_asset_note_dialog
 from ui.refresh_guard import RefreshGuard
 from core.services import icon_service
+from core.asset_display import display_asset
 
 # Phase 2: "Total Managed Value" (Crypto Value + Cash Reserve) is prepared but
 # NOT wired into the primary Total Value/ROI/PnL KPIs — those keep their
@@ -477,7 +478,7 @@ def _main_view_impl(page: ft.Page) -> None:
                                             if (_ICONS_DIR / f"{p.asset.lower()}.png").exists()
                                             else []
                                         ),
-                                        ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
+                                        ft.Text(display_asset(p.asset), size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
                                         *(
                                             [ft.Icon(ft.Icons.INFO_OUTLINE, size=15, color=T_MUT, tooltip=asset_notes[p.asset])]
                                             if asset_notes.get(p.asset)

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 import flet as ft
 
 from core.services.ui_facade import get_asset_detail, get_asset_proceeds
+from core.asset_display import display_asset
 
 # ── Color palette (consistent with app_flet.py) ────────────────────────────
 BG_CARD = "#0f1621"
@@ -83,7 +84,7 @@ def build_asset_detail_view(
                 style=ft.ButtonStyle(color=T_MUT),
             ),
             ft.Text(
-                f"{detail.asset}  –  Detail",
+                f"{display_asset(detail.asset)}  –  Detail",
                 size=20,
                 weight=ft.FontWeight.BOLD,
                 color=T_PRI,

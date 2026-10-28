@@ -30,14 +30,26 @@ see the Etapa 1 validation follow-up conversation for full reasoning):
     ENA, HYPE, INJ, MORPHO, NEAR, RENDER, XLM were each the sole coin on
     CoinGecko with that exact ticker symbol — unambiguous. MON resolved to
     "monad" (id=monad) — also the sole exact-symbol match, despite fuzzy
-    text-search noise from "Monero". PUMP and TON were deliberately NOT
-    added — PUMP has two real coins sharing the ticker (pump-fun vs.
-    big-pump, ranks 50 vs. 2802) and TON's current CoinGecko ticker
-    belongs to an unrelated project (Tokamak Network); the likely actual
-    match (the-open-network, "Gram (prev. Toncoin)") now trades under a
-    different symbol after an apparent rebrand. Both need explicit human
-    confirmation before being added — see this project's validation
-    report rather than guessing here.
+    text-search noise from "Monero".
+
+    PUMP -> pump-fun (confirmed 2026-10-28, human-verified against a real
+    transaction, not a ticker-symbol guess): two real coins share the PUMP
+    ticker (pump-fun rank 50 vs. big-pump rank 2802), so the exact-symbol
+    search alone was ambiguous. Resolved by cross-checking a real Revolut
+    trade (2026-10-18 18:14, 26750.72651741 PUMP for 2500 CZK, i.e.
+    0.091249 CZK/PUMP) against pump-fun's CoinGecko historical price for
+    that same date, which matches to within normal daily-close precision;
+    the other PUMP candidate is several orders of magnitude off.
+
+    TON -> the-open-network (confirmed 2026-10-28, human-verified, not a
+    ticker-symbol guess): this ledger's "TON" is the original Toncoin,
+    which CoinGecko now lists as "Gram (prev. Toncoin)" after a rebrand —
+    its id (the-open-network) is stable across the rename, only its
+    *symbol* changed (now GRAM), which is why a naive current-symbol
+    search for "TON" would have wrongly matched the unrelated Tokamak
+    Network instead (id=tokamak-network, a different project). The ledger
+    asset symbol "TON" itself is untouched — this mapping only affects
+    which CoinGecko id its price lookups resolve to.
 
 Anonymous-tier history limit (found during validation, 2026-10):
     CoinGecko's keyless public tier hard-caps historical lookback at 365
@@ -90,12 +102,14 @@ COINGECKO_IDS: Dict[str, str] = {
     "NEAR": "near",
     "ONDO": "ondo-finance",
     "PENGU":"pudgy-penguins",
+    "PUMP": "pump-fun",
     "RENDER": "render-token",
     "RUNE": "thorchain",
     "SOL":  "solana",
     "SOLX": "solaxy",
     "TAO":  "bittensor",
     "TICS": "qubetics",
+    "TON":  "the-open-network",
     "UNI":  "uniswap",
     "USDC": "usd-coin",
     "USDT": "tether",

@@ -21,6 +21,7 @@ from core.services.ui_facade import (
     export_positions_to_csv,
     get_positions_full,
 )
+from core.asset_display import display_asset
 
 # ── Color palette (same as app_flet.py) ────────────────────────────────────
 BG_CARD = "#131922"
@@ -288,7 +289,7 @@ def build_positions_view(
 
         data_rows = []
         for p in visible:
-            cells = [ft.DataCell(ft.Text(p.asset, color=T_PRI, size=12))]
+            cells = [ft.DataCell(ft.Text(display_asset(p.asset), color=T_PRI, size=12))]
             for key, _ in _COLS:
                 if key == "roi_total":
                     val = getattr(p, key, None)

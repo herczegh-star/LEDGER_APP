@@ -16,6 +16,7 @@ from typing import Optional
 import flet as ft
 
 from core.services.ui_facade import get_dashboard_snapshot, PositionDTO
+from core.asset_display import display_asset
 
 # ── Color palette (mirrors app_flet.py) ─────────────────────────────────────
 BG        = "#0b0f14"
@@ -154,7 +155,7 @@ def build_venue_view(
                 [
                     ft.Row(
                         [
-                            ft.Text(p.asset, size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
+                            ft.Text(display_asset(p.asset), size=18, weight=ft.FontWeight.BOLD, color=T_PRI),
                             ft.Row(
                                 [
                                     ft.Text(_czk(unr, sign=True), size=14,

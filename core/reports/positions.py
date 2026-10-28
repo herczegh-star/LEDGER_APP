@@ -56,6 +56,7 @@ def compute_positions(
     rows: List[RawRow],
     fiat: FrozenSet[str] = _FIAT_DEFAULT,
     initial_cost_transfer: Optional[Dict[str, Decimal]] = None,
+    capture_cost_transfer: Optional[Dict[str, Decimal]] = None,
 ) -> List[PositionRow]:
     """Compute WAC per-asset positions from ledger rows.
 
@@ -64,6 +65,15 @@ def compute_positions(
               determinism; caller order does not matter).
         fiat: Set of fiat asset symbols treated as quote currencies.
               Rows whose asset is in this set are never counted as positions.
+        capture_cost_transfer: Optional output parameter. When given an
+              (initially empty) dict, this function fills it with the same
+              {trade_id: cost_basis_removed} mapping it already builds
+              internally for asset→asset swaps (see "cost_transfer" below).
+              Purely a read-out of an existing internal value — does NOT
+              change quantity/cost_basis/realized_pnl in any way. Added so
+              core/services/portfolio_history_service.py's Portfolio
+              Contributors feature can attribute swap capital flow per
+              asset without duplicating this module's swap-cost logic.
 
     Returns:
         List[PositionRow] sorted alphabetically by asset name.
@@ -300,6 +310,9 @@ def compute_positions(
             cost_basis=state.cost_basis,
             realized_pnl=state.realized_pnl,
         ))
+
+    if capture_cost_transfer is not None:
+        capture_cost_transfer.update(cost_transfer)
 
     return result
 

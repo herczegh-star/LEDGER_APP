@@ -1,0 +1,20 @@
+{
+  "anomalies": {
+    "invalid_type": [],
+    "null_or_empty_asset": [],
+    "null_or_empty_currency": [],
+    "null_or_empty_id": [],
+    "null_or_empty_venue": [],
+    "zero_amount": []
+  },
+  "count_after": 584,
+  "count_before": 584,
+  "count_unchanged": true,
+  "duplicate_row_fp_values": {},
+  "fingerprint_recompute_mismatches": [],
+  "operation_key_vs_row_fp_mismatches": [],
+  "total_rows_scanned": 584,
+  "unusual_id_group_sizes": {
+    "20260325_170034_KRAKEN_TRANSFER_001": 5
+  }
+}

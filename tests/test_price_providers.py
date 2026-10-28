@@ -272,8 +272,9 @@ class TestCoinGeckoHistoricalPrices:
 class TestNewCoinGeckoMappings:
     """Each mapping below was the SOLE exact-symbol match on CoinGecko's own
     /search at verification time — see core/prices/coingecko.py's module
-    docstring. PUMP and TON were deliberately left unmapped (genuine
-    ticker-collision risk) and must stay absent until a human confirms."""
+    docstring. PUMP and TON both initially needed a genuine ticker-collision
+    (PUMP) or rebrand (TON) resolved by a human before being added — see
+    the per-ticker comments below, not a blind symbol-search guess."""
 
     @pytest.mark.parametrize("ticker,expected_id", [
         ("ENA", "ethena"),
@@ -282,23 +283,30 @@ class TestNewCoinGeckoMappings:
         ("MON", "monad"),
         ("MORPHO", "morpho"),
         ("NEAR", "near"),
+        ("PUMP", "pump-fun"),
         ("RENDER", "render-token"),
+        ("TON", "the-open-network"),
         ("XLM", "stellar"),
     ])
     def test_new_mapping_resolves_to_verified_id(self, ticker, expected_id):
         assert COINGECKO_IDS[ticker] == expected_id
 
-    def test_pump_deliberately_unresolved(self):
-        """Two real coins share the PUMP ticker (pump-fun rank 50 vs.
-        big-pump rank 2802) — must not be auto-resolved without confirmation."""
-        assert "PUMP" not in COINGECKO_IDS
+    def test_pump_resolves_to_pump_fun_not_big_pump(self):
+        """Human-confirmed 2026-10-28 against a real Revolut trade
+        (26750.72651741 PUMP for 2500 CZK = 0.091249 CZK/PUMP on
+        2026-10-18): pump-fun's historical CoinGecko price for that date
+        matches to within normal precision; the other PUMP-ticker coin
+        (big-pump) is several orders of magnitude off — not a guess."""
+        assert COINGECKO_IDS["PUMP"] == "pump-fun"
+        assert COINGECKO_IDS["PUMP"] != "big-pump"
 
-    def test_ton_deliberately_unresolved(self):
-        """CoinGecko's current TON-symbol coin (Tokamak Network) is NOT
-        the Toncoin this ledger almost certainly means — the real
-        candidate (the-open-network) now trades under a different symbol
-        after an apparent rebrand. Must not be auto-resolved."""
-        assert "TON" not in COINGECKO_IDS
+    def test_ton_resolves_to_the_open_network_not_tokamak(self):
+        """Human-confirmed 2026-10-28: this ledger's TON is the original
+        Toncoin, which CoinGecko now lists under id "the-open-network"
+        with symbol "GRAM" after a rebrand — NOT the unrelated Tokamak
+        Network project, which happens to hold the current TON symbol."""
+        assert COINGECKO_IDS["TON"] == "the-open-network"
+        assert COINGECKO_IDS["TON"] != "tokamak-network"
 
 
 # ── CoinGeckoPriceProvider.get_historical_prices_range() ────────────────────

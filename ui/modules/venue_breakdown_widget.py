@@ -21,6 +21,7 @@ from typing import Callable, Optional
 import flet as ft
 
 from core.services import icon_service
+from core.asset_display import display_asset
 
 # ── Color palette (matches app_flet.py) ─────────────────────────────────────
 BG_CARD    = "#0f1621"
@@ -100,7 +101,7 @@ def build_venue_card(
             ft.Container(
                 content=ft.Row(
                     [
-                        ft.Text(asset, size=10, color=T_MUT),
+                        ft.Text(display_asset(asset), size=10, color=T_MUT),
                         ft.Text(_fmt_qty(qty), size=10, color=T_PRI),
                     ],
                     spacing=4,
@@ -115,7 +116,7 @@ def build_venue_card(
     else:
         chips = [
             ft.Container(
-                content=ft.Text(p.asset, size=10, color=T_MUT),
+                content=ft.Text(display_asset(p.asset), size=10, color=T_MUT),
                 bgcolor="#162030",
                 border_radius=4,
                 padding=ft.padding.symmetric(2, 6),
