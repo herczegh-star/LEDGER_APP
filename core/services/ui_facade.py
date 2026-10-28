@@ -104,6 +104,16 @@ def compute_headline_positions(
     return [p for p in positions if p.asset not in excluded_assets]
 
 
+def compute_headline_value(positions: List[PositionDTO]) -> Optional[Decimal]:
+    """Sum of .value over compute_headline_positions(positions) — the
+    same figure ui/app_flet.py's update_kpis() shows as the headline
+    Portfolio Value KPI, exposed here so other UI (e.g. Portfolio Pulse)
+    can read it without re-deriving the aggregation itself. None when no
+    headline position has a live value (never a fabricated 0)."""
+    vals = [p.value for p in compute_headline_positions(positions) if p.value is not None]
+    return sum(vals, _ZERO) if vals else None
+
+
 def compute_presale_summary(
     positions: List[PositionDTO],
     presale_assets: FrozenSet[str] = PRESALE_ASSETS,

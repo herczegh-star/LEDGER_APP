@@ -21,8 +21,19 @@ import flet as ft
 import pytest
 
 import ui.modules.analysis_view as av
+from core.prices.coingecko import CoinGeckoPriceProvider
 from core.services.trade_service import AddTradeInput, add_trade
 from core.services.ui_facade import create_db
+
+
+@pytest.fixture(autouse=True)
+def no_network_coingecko(monkeypatch):
+    """Relative Strength and Portfolio Pulse each hold their own
+    CoinGeckoPriceProvider for live 24h-change — build_analysis_view()'s
+    run_fn() always renders both sections, so every test here would
+    otherwise make real network calls unrelated to what it's testing."""
+    monkeypatch.setattr(CoinGeckoPriceProvider, "get_prices_with_24h_change", lambda self, assets, fiat: {})
+    monkeypatch.setattr(CoinGeckoPriceProvider, "get_prices", lambda self, assets, fiat: {})
 
 
 @pytest.fixture

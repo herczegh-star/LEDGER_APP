@@ -23,10 +23,12 @@ from typing import Optional
 import flet as ft
 
 from core.prices.coingecko import CoinGeckoPriceProvider
+from core.services.portfolio_pulse_service import compute_portfolio_24h_change
 from core.services.relative_strength_service import compute_relative_strength
 from core.services.ui_facade import (
-    compute_allocation, get_dashboard_snapshot, get_earliest_ledger_date,
-    get_portfolio_contributors, get_portfolio_value_trend, run_sell_simulation,
+    compute_allocation, compute_headline_value, get_dashboard_snapshot,
+    get_earliest_ledger_date, get_portfolio_contributors, get_portfolio_value_trend,
+    run_sell_simulation,
 )
 from ui.modules.portfolio_value_chart import build_portfolio_value_chart
 from core.asset_display import display_asset
@@ -134,6 +136,84 @@ def build_analysis_view(
     """
     snap_holder: list = [None]
 
+    # ── Portfolio Pulse (top of Analysis) ───────────────────────────────────────
+    # Portfolio Value / 24H Change are always live/current (independent of the
+    # period selector below) — only Best/Worst Contributor tracks the shared
+    # period. Best/Worst reuse the SAME get_portfolio_contributors() result the
+    # Contributors section already fetches for that period (see
+    # contributors_cache, populated by _render_contributors() further down) —
+    # never a second fetch for the same data.
+    _pulse_price_provider = CoinGeckoPriceProvider(ttl_seconds=60)  # dedicated
+    # instance for the 24h-change capability, same pattern as Relative Strength.
+    contributors_cache: list = [[]]
+
+    pulse_value_text = ft.Text("—", size=20, weight=ft.FontWeight.BOLD, color=T_PRI)
+    pulse_24h_text = ft.Text("—", size=20, weight=ft.FontWeight.BOLD, color=T_MUT)
+    pulse_best_text = ft.Text("—", size=16, weight=ft.FontWeight.BOLD, color=T_MUT)
+    pulse_worst_text = ft.Text("—", size=16, weight=ft.FontWeight.BOLD, color=T_MUT)
+
+    def _pulse_card(label: str, value_text: ft.Text) -> ft.Container:
+        return ft.Container(
+            content=ft.Column(
+                [ft.Text(label, size=11, color=T_MUT), ft.Container(height=6), value_text],
+                spacing=0,
+            ),
+            bgcolor=BG_CARD,
+            border=ft.border.all(1, BORDER),
+            border_radius=10,
+            padding=16,
+            width=220,
+        )
+
+    def _render_pulse_live(snap) -> None:
+        """Portfolio Value + 24H Change — always current, independent of
+        the period selector. No new fetch beyond one live
+        get_prices_with_24h_change() call (same cost as Relative
+        Strength's own live 24h call)."""
+        portfolio_value = compute_headline_value(snap.positions)
+        pulse_value_text.value = _czk(portfolio_value)
+        pulse_value_text.color = T_PRI if portfolio_value is not None else T_MUT
+
+        change = compute_portfolio_24h_change(snap.positions, _pulse_price_provider, fiat)
+        pulse_24h_text.value = _pct_raw(change.change_pct)
+        pulse_24h_text.color = _color(change.change_pct)
+
+    def _render_pulse_contributors() -> None:
+        """Best/Worst Contributor — a plain max()/min() pick over the
+        already-fetched contributors_cache for the shared period. No new
+        computation, no new fetch (mirrors the Contributors section's
+        own existing Top-5/Worst-5 selection pattern)."""
+        valid = [c for c in contributors_cache[0] if c.contribution_czk is not None]
+        if not valid:
+            pulse_best_text.value = "—"
+            pulse_best_text.color = T_MUT
+            pulse_worst_text.value = "—"
+            pulse_worst_text.color = T_MUT
+            return
+        best = max(valid, key=lambda c: c.contribution_czk)
+        worst = min(valid, key=lambda c: c.contribution_czk)
+        pulse_best_text.value = f"{display_asset(best.asset)} {_czk(best.contribution_czk, sign=True)}"
+        pulse_best_text.color = _color(best.contribution_czk)
+        pulse_worst_text.value = f"{display_asset(worst.asset)} {_czk(worst.contribution_czk, sign=True)}"
+        pulse_worst_text.color = _color(worst.contribution_czk)
+
+    pulse_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    _pulse_card("Portfolio Value", pulse_value_text),
+                    _pulse_card("24H Change", pulse_24h_text),
+                    _pulse_card("Best Contributor", pulse_best_text),
+                    _pulse_card("Worst Contributor", pulse_worst_text),
+                ],
+                spacing=16,
+                run_spacing=16,
+                wrap=True,
+            ),
+        ],
+        spacing=0,
+    )
+
     # ── Portfolio Value Trend ────────────────────────────────────────────────
     period_dd = ft.Dropdown(
         label="Period",
@@ -160,6 +240,7 @@ def build_analysis_view(
         trend_chart_container.content = build_portfolio_value_chart(trend_points, date_from, date_to, metric="value")
         _render_pnl_roi_chart()
         _render_contributors()
+        _render_pulse_contributors()
         page.update()
 
     period_dd.on_select = _load_trend  # ft.Dropdown fires on_select, not on_change (Flet 0.80.5)
@@ -257,6 +338,7 @@ def build_analysis_view(
         if date_from is None:
             return
         contributors = get_portfolio_contributors(db_path, date_from, date_to)
+        contributors_cache[0] = contributors  # Portfolio Pulse's Best/Worst reads this — no second fetch
         valid = [c for c in contributors if c.contribution_czk is not None]
         excluded = sorted(c.asset for c in contributors if c.contribution_czk is None)
 
@@ -665,6 +747,8 @@ def build_analysis_view(
     # ── Full view ─────────────────────────────────────────────────────────────
     scroll_col = ft.Column(
         [
+            pulse_section,
+            ft.Container(height=28),
             trend_section,
             ft.Container(height=28),
             pnl_roi_section,
@@ -716,6 +800,7 @@ def build_analysis_view(
         snap = get_dashboard_snapshot(db_path, price_provider, fiat)
         snap_holder[0] = snap
         _populate_venues(snap)
+        _render_pulse_live(snap)
         _render_allocation(snap)
         _render_relative_strength(snap)
         page.update()
