@@ -1844,3 +1844,14 @@ def get_portfolio_value_trend(db_path: str, date_from, date_to):
     future UI to render directly without recomputing anything itself."""
     from core.services.portfolio_history_service import get_portfolio_value_trend as _trend
     return _trend(db_path, date_from, date_to)
+
+
+def get_earliest_ledger_date(db_path: str):
+    """Read-only: the calendar date of the ledger's earliest row, or None
+    for an empty ledger. Pure date boundary lookup — not a portfolio
+    calculation — used by the Analysis "ALL" period to know where history
+    actually starts, instead of a UI module reading raw ledger rows itself."""
+    rows = get_ledger_rows(db_path)
+    if not rows:
+        return None
+    return min(r.timestamp for r in rows).date()

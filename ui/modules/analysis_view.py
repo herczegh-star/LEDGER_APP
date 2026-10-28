@@ -1,21 +1,32 @@
-"""Analysis page — Sell Simulator.
+"""Analysis page — Portfolio Value Trend + Sell Simulator.
 
 Public API:
     build_analysis_view(page, db_path, price_provider=None, fiat="CZK")
         -> (ft.Container view, callable run_fn)
 
-The Sell Simulator projects simulated PnL if all matching positions in a
-selected venue were sold at the current spot price.  Read-only: no ledger
-writes.  Uses PositionDTO.unrealized_pnl (= value − cost_basis) directly.
+Portfolio Value Trend (top section) renders core.services.ui_facade.
+get_portfolio_value_trend() through ui.modules.portfolio_value_chart — this
+module does NOT compute portfolio value itself, only period-range picking
+(7D/30D/90D/1Y/ALL -> date_from/date_to) and rendering.
+
+The Sell Simulator (bottom section, unchanged) projects simulated PnL if
+all matching positions in a selected venue were sold at the current spot
+price.  Read-only: no ledger writes.  Uses PositionDTO.unrealized_pnl
+(= value − cost_basis) directly.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
 import flet as ft
 
-from core.services.ui_facade import get_dashboard_snapshot, run_sell_simulation
+from core.services.ui_facade import (
+    get_dashboard_snapshot, get_earliest_ledger_date, get_portfolio_value_trend,
+    run_sell_simulation,
+)
+from ui.modules.portfolio_value_chart import build_portfolio_value_chart
 
 # ── Color palette (mirrors app_flet.py) ─────────────────────────────────────
 BG        = "#0b0f14"
@@ -36,6 +47,26 @@ _MODES = [
     ("profitable_only", "Profitable Only"),
     ("loss_only",       "Loss Only"),
 ]
+
+# (period key, trailing day count; None = "since the ledger's earliest row")
+_TREND_PERIODS = [
+    ("7D",  7),
+    ("30D", 30),
+    ("90D", 90),
+    ("1Y",  365),
+    ("ALL", None),
+]
+_DEFAULT_TREND_PERIOD = "30D"
+
+
+def _trend_period_range(period_key: str, earliest_ledger_date) -> tuple:
+    """Pure date-range picking — not a portfolio calculation. ALL falls
+    back to today (empty range) when the ledger has no rows at all."""
+    today = date.today()
+    days = dict(_TREND_PERIODS).get(period_key)
+    if days is None:  # "ALL"
+        return (earliest_ledger_date or today), today
+    return today - timedelta(days=days - 1), today
 
 
 # ── Format helpers ────────────────────────────────────────────────────────────
@@ -84,7 +115,56 @@ def build_analysis_view(
     """
     snap_holder: list = [None]
 
-    # ── Input controls ────────────────────────────────────────────────────────
+    # ── Portfolio Value Trend ────────────────────────────────────────────────
+    period_dd = ft.Dropdown(
+        label="Period",
+        options=[ft.dropdown.Option(k, k) for k, _ in _TREND_PERIODS],
+        value=_DEFAULT_TREND_PERIOD,
+        width=130,
+        text_size=13,
+    )
+    trend_chart_container = ft.Container()
+
+    def _load_trend(e=None) -> None:
+        period = period_dd.value or _DEFAULT_TREND_PERIOD
+        earliest = get_earliest_ledger_date(db_path)
+        date_from, date_to = _trend_period_range(period, earliest)
+        trend_points = get_portfolio_value_trend(db_path, date_from, date_to)
+        trend_chart_container.content = build_portfolio_value_chart(trend_points, date_from, date_to)
+        page.update()
+
+    period_dd.on_select = _load_trend  # ft.Dropdown fires on_select, not on_change (Flet 0.80.5)
+
+    trend_section = ft.Column(
+        [
+            ft.Row(
+                [
+                    ft.Text("Portfolio Value Trend", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
+                    period_dd,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            ft.Container(height=8),
+            ft.Container(
+                content=trend_chart_container,
+                bgcolor=BG_CARD,
+                border=ft.border.all(1, BORDER),
+                border_radius=10,
+                padding=16,
+            ),
+            ft.Container(height=4),
+            ft.Text(
+                "Historical = daily prices • Latest = live value",
+                size=10,
+                color=T_MUT,
+                italic=True,
+            ),
+        ],
+        spacing=4,
+    )
+
+    # ── Input controls (Sell Simulator) ─────────────────────────────────────────
     venue_dd = ft.Dropdown(
         label="Venue",
         options=[],
@@ -251,6 +331,10 @@ def build_analysis_view(
     # ── Full view ─────────────────────────────────────────────────────────────
     scroll_col = ft.Column(
         [
+            trend_section,
+            ft.Container(height=28),
+            ft.Divider(height=1, color=BORDER),
+            ft.Container(height=20),
             ft.Text("Sell Simulator", size=20, weight=ft.FontWeight.BOLD, color=T_PRI),
             ft.Container(height=4),
             ft.Text(
@@ -286,6 +370,7 @@ def build_analysis_view(
             venue_dd.value = venues[0]
 
     def run(e=None) -> None:
+        _load_trend()
         snap = get_dashboard_snapshot(db_path, price_provider, fiat)
         snap_holder[0] = snap
         _populate_venues(snap)
