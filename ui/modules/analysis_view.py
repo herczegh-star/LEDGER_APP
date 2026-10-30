@@ -237,7 +237,9 @@ def build_analysis_view(
         trend_state["points"] = trend_points
         trend_state["date_from"] = date_from
         trend_state["date_to"] = date_to
-        trend_chart_container.content = build_portfolio_value_chart(trend_points, date_from, date_to, metric="value")
+        trend_chart_container.content = build_portfolio_value_chart(
+            trend_points, date_from, date_to, metric="value", page=page,
+        )
         _render_pnl_roi_chart()
         _render_contributors()
         _render_pulse_contributors()
@@ -287,7 +289,7 @@ def build_analysis_view(
     def _render_pnl_roi_chart() -> None:
         metric = metric_dd.value or _DEFAULT_PNL_ROI_METRIC
         pnl_roi_chart_container.content = build_portfolio_value_chart(
-            trend_state["points"], trend_state["date_from"], trend_state["date_to"], metric=metric,
+            trend_state["points"], trend_state["date_from"], trend_state["date_to"], metric=metric, page=page,
         )
 
     def _on_metric_change(e=None) -> None:

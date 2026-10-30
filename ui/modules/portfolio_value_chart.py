@@ -1,7 +1,7 @@
 """Portfolio Value / PnL / ROI Trend — a minimal reusable flet.canvas line chart.
 
 Public API:
-    build_portfolio_value_chart(trend_points, date_from, date_to, width, height, metric) -> ft.Control
+    build_portfolio_value_chart(trend_points, date_from, date_to, width, height, metric, page) -> ft.Control
 
     metric: "value" (Portfolio Value, CZK) | "pnl" (Unrealized PnL, CZK) |
             "roi" (ROI, %). All three read straight from the SAME
@@ -9,6 +9,20 @@ Public API:
             core.services.portfolio_history_service.get_portfolio_value_trend()
             — this module never computes value/PnL/ROI itself, only picks
             which already-computed field to plot and how to format it.
+
+    Selection: the returned control is a Stack([canvas, GestureDetector])
+    so the whole chart rectangle is an active click zone, not just the
+    drawn line. Moving the mouse over the chart does NOTHING — there is
+    no hover reaction by design. Only a click (GestureDetector.on_tap_down)
+    selects the nearest real daily point (by X pixel position only —
+    never interpolated) and shows a marker + tooltip (date + exact value,
+    "Live" tag for the live snapshot point). The selection is PERSISTENT:
+    it stays visible after the click ends and after the mouse leaves the
+    chart; a later click elsewhere just moves it to the new nearest
+    point. Each click redraw syncs only the canvas control
+    (canvas.update()), not the whole page — *page*, if passed, is used
+    solely as a fallback when the control isn't mounted to a real page
+    yet (e.g. in tests) — no data or layout changes happen here.
 
 No data fetching or portfolio computation happens here — the caller
 passes an already-fetched List[PortfolioValueTrendPointDTO]. This module
@@ -42,8 +56,8 @@ T_PRI     = "#e2e8f0"
 T_MUT     = "#7b8799"
 GRID      = "#1f2a3a"
 ZERO_LINE = "#3a4a63"   # slightly brighter than GRID — a zero-crossing reference, not just a tick
-LINE_COLOR = "#1d4ed8"   # BLUE — backfill (historical, daily CoinGecko price) line
-LIVE_COLOR = "#f59e0b"   # distinct accent — live snapshot point + its connector
+LINE_COLOR = "#00e68a"   # electric/neon green — backfill (historical, daily CoinGecko price) line
+LIVE_COLOR = "#f59e0b"   # distinct accent — live snapshot point + its connector (kept orange)
 
 _PAD_LEFT = 54
 _PAD_RIGHT = 12
@@ -51,6 +65,13 @@ _PAD_TOP = 16
 _PAD_BOTTOM = 26
 _MAX_X_LABELS = 6
 _Y_RANGE_PADDING_FRACTION = Decimal("0.08")  # 8% breathing room above max / below min
+_LINE_STROKE_WIDTH = 2.75
+
+# ── Click selection tooltip ──────────────────────────────────────────────────
+_SELECTION_RING_COLOR = "#f8fafc"
+_TOOLTIP_BG = "#1c2838"
+_TOOLTIP_BORDER = "#334155"
+_TOOLTIP_MARGIN = 14
 
 
 # ── Formatters ────────────────────────────────────────────────────────────────
@@ -223,7 +244,7 @@ def _build_canvas(layout: ChartLayout, width: float, height: float) -> ft.Contro
     for p1, p2 in zip(line_points, line_points[1:]):
         shapes.append(cv.Line(
             p1.x, p1.y, p2.x, p2.y,
-            paint=ft.Paint(color=LINE_COLOR, stroke_width=2, style=ft.PaintingStyle.STROKE),
+            paint=ft.Paint(color=LINE_COLOR, stroke_width=_LINE_STROKE_WIDTH, style=ft.PaintingStyle.STROKE),
         ))
 
     # Dashed connector into the live point — must not look like an ordinary
@@ -232,7 +253,7 @@ def _build_canvas(layout: ChartLayout, width: float, height: float) -> ft.Contro
         shapes.append(cv.Line(
             layout.last_backfill.x, layout.last_backfill.y,
             layout.live_point.x, layout.live_point.y,
-            paint=ft.Paint(color=LIVE_COLOR, stroke_width=2, stroke_dash_pattern=[4, 4]),
+            paint=ft.Paint(color=LIVE_COLOR, stroke_width=_LINE_STROKE_WIDTH, stroke_dash_pattern=[4, 4]),
         ))
 
     # Single-point series: nothing else would render — draw one marker.
@@ -262,6 +283,52 @@ def _build_canvas(layout: ChartLayout, width: float, height: float) -> ft.Contro
     return cv.Canvas(shapes, width=width, height=height)
 
 
+def find_nearest_point(layout: ChartLayout, x: float) -> Optional[_PlottedPoint]:
+    """Pure nearest-real-point-by-X lookup for click selection. Always
+    snaps to one actual daily point — never an interpolated value between
+    two days."""
+    if not layout.points:
+        return None
+    return min(layout.points, key=lambda p: abs(p.x - x))
+
+
+def _build_selection_shapes(point: _PlottedPoint, layout: ChartLayout, width: float, height: float) -> list:
+    """Vertical guide line + highlight marker + small tooltip (date +
+    exact value, '+Live' tag for the live snapshot point) for the
+    clicked/selected point."""
+    marker_color = LIVE_COLOR if point.source == "live_snapshot" else LINE_COLOR
+    shapes: list = [
+        # Subtle guide line across the plot height at the active date —
+        # optional per spec, cheap, makes "which day am I over" obvious.
+        cv.Line(point.x, _PAD_TOP, point.x, height - _PAD_BOTTOM,
+                paint=ft.Paint(color=ZERO_LINE, stroke_width=1)),
+        cv.Circle(point.x, point.y, 7, paint=ft.Paint(
+            color=_SELECTION_RING_COLOR, style=ft.PaintingStyle.STROKE, stroke_width=2)),
+        cv.Circle(point.x, point.y, 4, paint=ft.Paint(color=marker_color, style=ft.PaintingStyle.FILL)),
+    ]
+
+    is_live = point.source == "live_snapshot"
+    main_text = f"{point.date.strftime('%d.%m.%Y')} • {layout.label_fmt(point.value)}"
+
+    box_w = max(min(len(main_text) * 6.5 + 16, 240), 100)
+    box_h = 24 + (14 if is_live else 0)
+    box_x = max(_PAD_LEFT, min(point.x - box_w / 2, width - _PAD_RIGHT - box_w))
+    box_y = point.y - box_h - _TOOLTIP_MARGIN
+    if box_y < _PAD_TOP:
+        box_y = point.y + _TOOLTIP_MARGIN  # not enough room above -> show below instead
+
+    shapes.append(cv.Rect(box_x, box_y, box_w, box_h, border_radius=6,
+                           paint=ft.Paint(color=_TOOLTIP_BG, style=ft.PaintingStyle.FILL)))
+    shapes.append(cv.Rect(box_x, box_y, box_w, box_h, border_radius=6,
+                           paint=ft.Paint(color=_TOOLTIP_BORDER, stroke_width=1, style=ft.PaintingStyle.STROKE)))
+    shapes.append(cv.Text(box_x + 10, box_y + 6, main_text,
+                           style=ft.TextStyle(size=11, color=T_PRI, weight=ft.FontWeight.W_600)))
+    if is_live:
+        shapes.append(cv.Text(box_x + 10, box_y + 22, "Live",
+                               style=ft.TextStyle(size=9, color=LIVE_COLOR, italic=True)))
+    return shapes
+
+
 def build_portfolio_value_chart(
     trend_points,  # List[PortfolioValueTrendPointDTO]
     date_from: date,
@@ -269,10 +336,29 @@ def build_portfolio_value_chart(
     width: float = 880,
     height: float = 280,
     metric: str = "value",
+    page: Optional[ft.Page] = None,
 ) -> ft.Control:
     """Build the full chart control (or a placeholder) for the given
     already-fetched trend points and *metric*. Never raises on empty/
-    sparse data."""
+    sparse data.
+
+    Returns a Stack of [canvas, GestureDetector] so clicking works over
+    the WHOLE chart rectangle, not just where a shape happens to be
+    painted. A bare GestureDetector(content=canvas) only receives taps
+    where the canvas itself hit-tests as "painted" — in practice that
+    meant the cursor had to be right on the line/marker. The
+    GestureDetector here instead wraps its own full-size, fully
+    transparent Container, which Flutter always hit-tests across its
+    entire box regardless of color — that's what makes the whole plot
+    area an active click zone. Only the X pixel of the click is ever read
+    (find_nearest_point ignores Y entirely), so clicking far above/below
+    the line still resolves to the correct day. There is deliberately NO
+    on_hover handler — moving the mouse over the chart does nothing; only
+    a click (on_tap_down) selects a point, and that selection persists
+    (it is not cleared on mouse-exit). *page*, if given, is used only to
+    flush the click redraw — same pattern already used by the rest of
+    this view (container.content = ...; page.update()).
+    """
     layout = compute_chart_layout(trend_points, date_from, date_to, width, height, metric=metric)
     if layout is None:
         return ft.Container(
@@ -281,4 +367,34 @@ def build_portfolio_value_chart(
             width=width,
             height=height,
         )
-    return _build_canvas(layout, width, height)
+
+    canvas = _build_canvas(layout, width, height)
+    base_shapes = list(canvas.shapes)
+
+    def _set_selection(point: Optional[_PlottedPoint]) -> None:
+        canvas.shapes = base_shapes if point is None else base_shapes + _build_selection_shapes(point, layout, width, height)
+        # canvas.update() syncs only this control's subtree (Page.update(self)
+        # internally) instead of the whole page -- on a fully populated real
+        # Analysis page (Relative Strength table, Allocation, Pulse, etc. all
+        # mounted) a page-wide page.update() measured ~175ms per call. canvas.
+        # update() requires the control to already be mounted to a page; in
+        # tests (chart built but never actually added to a running Page) it
+        # isn't, so fall back to the caller-supplied page.update() there.
+        try:
+            canvas.update()
+        except RuntimeError:
+            if page is not None:
+                page.update()
+
+    def _on_tap_down(e) -> None:
+        # X only — Y never decides which point is selected (per spec).
+        # Uses only the already-computed layout.points (closure capture
+        # from the single compute_chart_layout() call above) -- no DB
+        # query, no recompute, no fetch.
+        _set_selection(find_nearest_point(layout, e.local_position.x))
+
+    hit_area = ft.GestureDetector(
+        content=ft.Container(width=width, height=height, bgcolor=ft.Colors.TRANSPARENT),
+        on_tap_down=_on_tap_down,
+    )
+    return ft.Stack([canvas, hit_area], width=width, height=height)

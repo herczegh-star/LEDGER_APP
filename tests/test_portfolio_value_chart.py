@@ -156,10 +156,16 @@ def test_build_chart_returns_placeholder_control_on_empty_data():
 
 
 def test_build_chart_returns_canvas_control_with_data():
+    import flet as ft
     import flet.canvas as cv
     points = [_point(_D1, Decimal("900000")), _point(_D2, Decimal("910000"))]
     ctrl = build_portfolio_value_chart(points, _D1, _D2)
-    assert isinstance(ctrl, cv.Canvas)
+    # Stack([canvas, GestureDetector]) -- the GestureDetector wraps a
+    # full-size transparent Container (not the canvas) so a click fires
+    # across the whole chart rectangle, not just where a shape is painted.
+    assert isinstance(ctrl, ft.Stack)
+    assert isinstance(ctrl.controls[0], cv.Canvas)
+    assert isinstance(ctrl.controls[1], ft.GestureDetector)
 
 
 # ── metric="pnl" / "roi" — PnL/ROI Trend (shares the same layout engine) ────
@@ -262,12 +268,236 @@ def test_pnl_live_point_still_detected_same_as_value_metric():
 
 
 def test_build_chart_roi_metric_returns_canvas_control():
+    import flet as ft
     import flet.canvas as cv
     points = [_pr_point(_D1, roi=Decimal("-0.1")), _pr_point(_D2, roi=Decimal("0.05"))]
     ctrl = build_portfolio_value_chart(points, _D1, _D2, metric="roi")
-    assert isinstance(ctrl, cv.Canvas)
+    assert isinstance(ctrl, ft.Stack)
+    assert isinstance(ctrl.controls[0], cv.Canvas)
+    assert isinstance(ctrl.controls[1], ft.GestureDetector)
 
 
 def test_build_chart_pnl_metric_placeholder_on_no_data():
     ctrl = build_portfolio_value_chart([], _D1, _D2, metric="pnl")
     assert ctrl is not None
+
+
+# ── Click selection: nearest-point lookup + persistent marker/tooltip ──────
+# CLICK = selection, HOVER = nothing (by explicit spec). Selection always
+# snaps to one real daily point (never interpolated); see find_nearest_point().
+
+class _FakeOffset:
+    def __init__(self, x, y=0):
+        self.x = x
+        self.y = y
+
+
+class _FakeTapDownEvent:
+    def __init__(self, x, y=0):
+        self.local_position = _FakeOffset(x, y)
+
+
+def _canvas_of(ctrl):
+    return ctrl.controls[0]  # Stack([canvas, GestureDetector])
+
+
+def _gesture_of(ctrl):
+    return ctrl.controls[1]
+
+
+def _text_values(canvas) -> list:
+    import flet.canvas as cv
+    return [s.value for s in canvas.shapes if isinstance(s, cv.Text)]
+
+
+def test_find_nearest_point_snaps_to_closer_of_two_points():
+    from ui.modules.portfolio_value_chart import find_nearest_point
+    points = [_point(_D1, Decimal("900000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    x = layout.points[0].x + (layout.points[1].x - layout.points[0].x) * 0.3
+    nearest = find_nearest_point(layout, x)
+    assert nearest.date == layout.points[0].date
+
+
+def test_find_nearest_point_on_no_points_returns_none():
+    from ui.modules.portfolio_value_chart import ChartLayout, find_nearest_point
+    empty_layout = ChartLayout(
+        points=[], last_backfill=None, live_point=None,
+        y_min=Decimal("0"), y_max=Decimal("1"), x_labels=[], y_labels=[],
+        zero_y=None, label_fmt=lambda v: str(v),
+    )
+    assert find_nearest_point(empty_layout, 100) is None
+
+
+def test_no_hover_handler_exists_moving_mouse_does_nothing():
+    """Explicit spec: hover must not be wired at all. The GestureDetector
+    has no on_hover/on_exit handler, so mouse movement alone can never
+    trigger anything."""
+    points = [_point(_D1, Decimal("900000")), _point(_D2, Decimal("910000"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D2)
+    gesture = _gesture_of(ctrl)
+    assert gesture.on_hover is None
+    assert gesture.on_exit is None
+    assert gesture.on_tap_down is not None
+
+
+def test_click_on_first_point_shows_its_date():
+    points = [_point(_D1, Decimal("900000")), _point(_D3, Decimal("950000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(layout.points[0].x))
+    assert any("01.10.2026" in t for t in _text_values(_canvas_of(ctrl)))
+
+
+def test_click_on_last_point_shows_its_date():
+    points = [_point(_D1, Decimal("900000")), _point(_D3, Decimal("950000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(layout.points[-1].x))
+    assert any("05.10.2026" in t for t in _text_values(_canvas_of(ctrl)))
+
+
+def test_click_between_two_points_snaps_to_nearer_one_not_interpolated():
+    points = [_point(_D1, Decimal("900000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    x = layout.points[0].x + (layout.points[1].x - layout.points[0].x) * 0.3
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(x))
+    texts = _text_values(_canvas_of(ctrl))
+    assert any("01.10.2026" in t for t in texts)
+    assert not any("05.10.2026" in t for t in texts)
+
+
+def test_click_far_above_the_line_still_picks_correct_point_by_x():
+    """Y must never gate or change which point is selected — clicking
+    anywhere vertically over a date's X position must resolve to that
+    date, even dozens of px above the drawn line."""
+    points = [_point(_D1, Decimal("900000")), _point(_D3, Decimal("950000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    mid_x = layout.points[1].x
+    far_above_y = max(layout.points[1].y - 150, 0)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(mid_x, far_above_y))
+    assert any("03.10.2026" in t for t in _text_values(_canvas_of(ctrl)))
+
+
+def test_click_far_below_the_line_still_picks_correct_point_by_x():
+    points = [_point(_D1, Decimal("900000")), _point(_D3, Decimal("950000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    mid_x = layout.points[1].x
+    far_below_y = layout.points[1].y + 150
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(mid_x, far_below_y))
+    assert any("03.10.2026" in t for t in _text_values(_canvas_of(ctrl)))
+
+
+def test_click_tooltip_formats_czk_value():
+    points = [_point(_D1, Decimal("935510"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D1)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(440))
+    assert any("935 510 CZK" in t for t in _text_values(_canvas_of(ctrl)))
+
+
+def test_click_tooltip_formats_roi_percentage():
+    points = [_pr_point(_D1, roi=Decimal("-0.309"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D1, metric="roi")
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(440))
+    texts = _text_values(_canvas_of(ctrl))
+    assert any("%" in t and "-30" in t for t in texts)
+
+
+def test_click_on_live_point_shows_live_tag():
+    points = [
+        _point(_D1, Decimal("900000"), source="backfill"),
+        _point(_D2, Decimal("910000"), source="live_snapshot"),
+    ]
+    layout = compute_chart_layout(points, _D1, _D2, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D2)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(layout.live_point.x))
+    assert "Live" in _text_values(_canvas_of(ctrl))
+
+
+def test_selection_is_persistent_no_handler_clears_it():
+    """No on_exit (or any other handler) exists to clear the selection --
+    it must survive indefinitely once set, matching the persistent-
+    selection spec (no hover-driven clearing)."""
+    points = [_point(_D1, Decimal("900000")), _point(_D2, Decimal("910000"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D2)
+    canvas = _canvas_of(ctrl)
+    base_count = len(canvas.shapes)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(100))
+    after_click_count = len(canvas.shapes)
+    assert after_click_count > base_count
+    # No exit handler to call -- simulate "mouse leaves / time passes" by
+    # simply re-reading the shapes; nothing should change them.
+    assert len(canvas.shapes) == after_click_count
+    assert gesture_has_no_exit_handler(ctrl)
+
+
+def gesture_has_no_exit_handler(ctrl) -> bool:
+    return _gesture_of(ctrl).on_exit is None
+
+
+def test_second_click_moves_selection_to_new_point_not_additive():
+    points = [_point(_D1, Decimal("900000")), _point(_D3, Decimal("950000")), _point(_D5, Decimal("920000"))]
+    layout = compute_chart_layout(points, _D1, _D5, 880, 280)
+    ctrl = build_portfolio_value_chart(points, _D1, _D5)
+    canvas = _canvas_of(ctrl)
+    gesture = _gesture_of(ctrl)
+
+    gesture.on_tap_down(_FakeTapDownEvent(layout.points[0].x))
+    count_after_first_click = len(canvas.shapes)
+    assert any("01.10.2026" in t for t in _text_values(canvas))
+
+    gesture.on_tap_down(_FakeTapDownEvent(layout.points[-1].x))
+    texts = _text_values(canvas)
+    assert any("05.10.2026" in t for t in texts)
+    assert not any("01.10.2026" in t for t in texts)  # old selection replaced, not stacked
+    assert len(canvas.shapes) == count_after_first_click  # same shape count, not accumulating
+
+
+def test_click_hit_area_is_a_fully_transparent_full_size_container():
+    """The GestureDetector must wrap an opaque-for-hit-testing (even if
+    visually transparent) full-size Container -- not the canvas itself --
+    otherwise Flutter only fires on_tap_down where a shape is painted."""
+    import flet as ft
+    points = [_point(_D1, Decimal("900000")), _point(_D2, Decimal("910000"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D2, width=880, height=280)
+    gesture = _gesture_of(ctrl)
+    assert isinstance(gesture.content, ft.Container)
+    assert gesture.content.width == 880 and gesture.content.height == 280
+    assert gesture.content.bgcolor == ft.Colors.TRANSPARENT
+
+
+def test_click_does_not_trigger_any_new_data_fetch_or_recompute():
+    """Click selection must work purely off already-computed pixel
+    positions -- no portfolio recomputation, no new service call."""
+    points = [_point(_D1, Decimal("900000")), _point(_D2, Decimal("910000"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D2)
+    calls = {"n": 0}
+
+    def _spy(*args, **kwargs):
+        calls["n"] += 1
+        return compute_chart_layout(*args, **kwargs)
+
+    import ui.modules.portfolio_value_chart as pvc
+    original = pvc.compute_chart_layout
+    pvc.compute_chart_layout = _spy
+    try:
+        _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(100))
+        _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(200))
+    finally:
+        pvc.compute_chart_layout = original
+    assert calls["n"] == 0  # click never re-enters layout computation
+
+
+def test_click_on_single_point_chart_does_not_crash():
+    points = [_point(_D1, Decimal("900000"))]
+    ctrl = build_portfolio_value_chart(points, _D1, _D1)
+    _gesture_of(ctrl).on_tap_down(_FakeTapDownEvent(50))  # must not raise
+
+
+def test_click_on_empty_chart_returns_plain_placeholder_without_interaction():
+    import flet as ft
+    ctrl = build_portfolio_value_chart([], _D1, _D5)
+    assert isinstance(ctrl, ft.Container)
